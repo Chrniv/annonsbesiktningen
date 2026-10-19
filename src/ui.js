@@ -58,9 +58,10 @@ export function startApp() {
     },
     campaigns: [{ v: 'search', t: 'Sök' }, { v: 'shopping', t: 'Shopping' }, { v: 'pmax', t: 'Performance Max' }, { v: 'display', t: 'Display eller video' }, { v: 'unsure', t: 'Vet inte' }],
     goal: [{ v: 'purchase', t: 'Köp i webbutiken' }, { v: 'lead', t: 'Förfrågan, formulär eller samtal' }, { v: 'both', t: 'Båda' }],
+    margin: [{ v: '0.3', t: 'Runt 30 %' }, { v: '0.4', t: 'Runt 40 %' }, { v: '0.5', t: 'Runt 50 %' }, { v: '0.6', t: 'Runt 60 %' }, { v: '0.7', t: '70 % eller mer' }, { v: '', t: 'Vet inte' }],
     budget: [{ v: '<10k', t: 'Under 10 000 kr' }, { v: '10-50k', t: '10 000–50 000 kr' }, { v: '50-200k', t: '50 000–200 000 kr' }, { v: '>200k', t: 'Över 200 000 kr' }]
   };
-  state.profile = { type: null, industry: null, industryOther: false, industryText: '', showAll: false, campaigns: [], goal: null, budget: null, done: false };
+  state.profile = { type: null, margin: null, industry: null, industryOther: false, industryText: '', showAll: false, campaigns: [], goal: null, budget: null, done: false };
   const fallbackInd = t => t === 'ecom' ? 'shopping' : t === 'b2b' ? 'b2b' : 'all';
   const indLabel = P => P.industryOther ? (P.industryText ? P.industryText + ' (jämförs med ' + benchName(P.industry) + ')' : benchName(P.industry)) : benchName(P.industry);
   const benchName = id => (BENCH.find(b => b.id === id) || {}).sv || id;
@@ -84,6 +85,8 @@ export function startApp() {
     $('q-campaigns').querySelector('.opts').innerHTML = Q.campaigns.map(o => optBtn('campaigns', o, true)).join('');
     $('q-goal').querySelector('.opts').innerHTML = Q.goal.map(o => optBtn('goal', o)).join('');
     $('q-budget').querySelector('.opts').innerHTML = Q.budget.map(o => optBtn('budget', o)).join('');
+    $('q-margin').hidden = P.type !== 'ecom' && P.goal !== 'purchase' && P.goal !== 'both';
+    $('q-margin').querySelector('.opts').innerHTML = Q.margin.map(o => optBtn('margin', o)).join('');
   }
   const QUIZ_HTML = $('quiz').innerHTML;
   $('quiz').addEventListener('click', ev => {
@@ -236,7 +239,7 @@ export function startApp() {
 
   function run(reports, sample, scroll = true) {
     state.sample = sample; state.unlocked = !!state.paidPending; state.paid = !!state.paidPending && !sample; state.lead = null; $('lead-note').hidden = true; markActiveLead();
-    const res = analyze(reports, { industry: $('industry').value });
+    const res = analyze(reports, { industry: $('industry').value, margin: state.profile.margin ? Number(state.profile.margin) : null });
     state.result = res;
     render(res);
     if (scroll) ($('example-note').hidden ? $('result') : $('example-note')).scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' });
@@ -347,7 +350,7 @@ export function startApp() {
     const lead = {
       submittedAt: new Date().toISOString(), email, company: $('g-company').value.trim(), website: $('g-site').value.trim(),
       industry: r.industry, sample: state.sample,
-      profile: { type: state.profile.type, industry: state.profile.industry, industryText: state.profile.industryOther ? state.profile.industryText : undefined, campaigns: state.profile.campaigns, goal: state.profile.goal, budget: state.profile.budget },
+      profile: { type: state.profile.type, margin: state.profile.margin || undefined, industry: state.profile.industry, industryText: state.profile.industryOther ? state.profile.industryText : undefined, campaigns: state.profile.campaigns, goal: state.profile.goal, budget: state.profile.budget },
       audit: {
         score: r.overall, verdict: r.verdict && r.verdict.label, period: r.period,
         spendMonthly: Math.round(r.spendMonthly), wasteMonthly: Math.round(r.wasteMonthly), potentialMonthly: Math.round(r.potentialMonthly), missedConvMonthly: Math.round(r.missedConvMonthly || 0),
