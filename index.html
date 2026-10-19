@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="sv">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Annonsbesiktningen – gratis granskning av ditt Google Ads-konto</title>
+<meta name="description" content="Ladda upp exporter från Google Ads och få ett protokoll på några minuter: resultat mot din bransch, slöseri på fel sökningar, budgettakt och förändringar vecka mot vecka.">
+<meta name="theme-color" content="#2E5E50">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wdth,wght@75..100,400..700&family=JetBrains+Mono:wght@400;500&display=swap">
+</head>
+<body>
+<div class="band"><span>Besiktningsprotokoll · Google Ads</span><span id="band-agency"></span></div>
+<div class="wrap">
+  <header class="mast">
+    <h1>Annonsbesiktningen</h1>
+    <p class="lede">Ladda upp exporter från Google Ads och få ett protokoll på några minuter: resultat mot din bransch, pengar som går till fel sökningar, budgettakt och vad som ändrats sedan förra veckan.</p>
+    <p class="privacy">Filerna läses i din webbläsare. Inget sparas förrän du själv väljer att få sammanfattningen.</p>
+  </header>
+
+  <section class="panel admin" id="admin-login" hidden aria-labelledby="login-h">
+    <div class="panel-head"><h2 id="login-h">Admininloggning</h2><span class="label">Endast för byrån</span></div>
+    <p class="small muted">Du får en inloggningslänk till din e-post. Bara adresser som finns i tabellen admins i Supabase kommer in.</p>
+    <div class="fields"><div class="field"><label class="label" for="admin-email">E-post</label><input type="email" id="admin-email" autocomplete="email" placeholder="namn@foretag.se"></div></div>
+    <p class="error" id="login-error" hidden></p>
+    <p class="note" id="login-sent" hidden></p>
+    <div class="actions"><button class="btn primary" type="button" id="admin-login-btn">Skicka inloggningslänk</button></div>
+  </section>
+
+  <section class="admin-bar" id="admin-bar" hidden aria-label="Adminläge">
+    <div class="admin-bar-row">
+      <span class="lockchip">Adminläge</span>
+      <span class="small" id="admin-status">Allt är upplåst för dig.</span>
+      <span class="small muted" id="admin-who"></span>
+      <div class="actions" style="margin-left:auto">
+        <button class="btn" type="button" id="admin-leads-btn">Leads</button>
+        <button class="btn" type="button" id="admin-preview-btn">Visa som prospekt</button>
+        <button class="btn" type="button" id="admin-logout-btn">Logga ut</button>
+      </div>
+    </div>
+  </section>
+
+  <section class="panel admin" id="leads" hidden aria-labelledby="leads-h">
+    <div class="panel-head"><h2 id="leads-h">Leads</h2><span class="label" id="leads-count"></span></div>
+    <p class="small muted" id="leads-source"></p>
+    <div class="bench-wrap"><table class="leads-table"><thead><tr><th>Datum</th><th>Företag</th><th>Budget/mån</th><th>E-post</th><th>Betyg</th><th>Kostnad/mån</th><th>Slöseri/mån</th><th>Fynd</th><th>Köpt</th><th></th></tr></thead><tbody id="leads-body"></tbody></table></div>
+    <p class="muted small" id="leads-empty" hidden>Inga leads ännu. De dyker upp här när en besökare fyller i e-post och godkänner villkoren.</p>
+    <p class="error" id="leads-error" hidden></p>
+    <div class="actions" style="margin-top:10px"><button class="btn" type="button" id="leads-refresh">Uppdatera</button></div>
+  </section>
+
+  <div id="lead-note" class="example lead-note" hidden></div>
+
+  <section class="panel" id="quiz" aria-labelledby="quiz-h">
+    <div class="panel-head"><h2 id="quiz-h">Berätta kort om ert företag</h2><span class="label">Steg 1 av 3 · ca 30 sekunder</span></div>
+    <p class="muted small">Svaren avgör vilken bransch vi jämför med och vilka rapporter du behöver exportera.</p>
+    <div class="q" id="q-type"><p class="q-title">Vad gör ni?</p><div class="opts" role="radiogroup" aria-label="Typ av verksamhet"></div></div>
+    <div class="q" id="q-industry"><p class="q-title">Vilken bransch ligger närmast?</p><p class="q-help small muted">Välj efter vad ni säljer, inte hur ni säljer det. Valet styr bara vilket branschsnitt kontot jämförs med.</p><div class="opts" role="radiogroup" aria-label="Bransch"></div>
+      <div class="q-other" id="q-ind-other" hidden><label for="q-ind-text" class="small">Vad säljer ni?</label><input id="q-ind-text" type="text" maxlength="80" placeholder="T.ex. lokalproducerad mat via en marknadsplats" autocomplete="off"><p class="small muted">Vi jämför med det närmaste snittet tills vidare.</p></div>
+      <button type="button" class="btn link small" id="q-ind-all">Visa alla branscher</button></div>
+    <div class="q" id="q-campaigns"><p class="q-title">Vilka kampanjtyper kör ni? <span class="muted small">Välj alla som stämmer</span></p><div class="opts" role="group" aria-label="Kampanjtyper"></div></div>
+    <div class="q" id="q-goal"><p class="q-title">Vad räknas som en konvertering hos er?</p><div class="opts" role="radiogroup" aria-label="Konverteringsmål"></div></div>
+    <div class="q" id="q-budget"><p class="q-title">Ungefärlig annonsbudget i Google Ads per månad</p><div class="opts" role="radiogroup" aria-label="Budget"></div></div>
+    <p class="error" id="quiz-error" hidden></p>
+    <div class="actions"><button class="btn primary" type="button" id="quiz-next">Visa vilka rapporter jag behöver</button><button class="btn link" type="button" id="quiz-skip">Hoppa över</button></div>
+  </section>
+
+  <section class="panel" id="intake" aria-labelledby="intake-h">
+    <div class="panel-head"><h2 id="intake-h">Ditt konto</h2><span class="label" id="intake-step">Steg 2 av 3</span></div>
+    <div id="checklist-wrap" hidden>
+      <p class="q-title">Exportera de här rapporterna från Google Ads</p>
+      <ol class="checklist" id="checklist"></ol>
+    </div>
+    <div class="fields">
+      <div class="field">
+        <label class="label" for="industry">Bransch</label>
+        <select id="industry"></select>
+      </div>
+      <div class="field">
+        <span class="label">Valuta</span>
+        <p class="small">Läses från exporten (SEK, NOK, DKK, EUR, USD eller GBP). Branschsnittet räknas om till kontots valuta.</p>
+      </div>
+    </div>
+    <label class="drop" id="drop" for="files">
+      <strong>Släpp CSV-filer här eller klicka för att välja</strong>
+      <span class="muted small">Kampanjrapport (obligatorisk) · Söktermer · Sökord · Produkter (Shopping). Svenska och engelska exporter fungerar.</span>
+      <input type="file" id="files" accept=".csv,.tsv,.txt,text/csv" multiple hidden>
+    </label>
+    <ul class="files" id="filelist" aria-live="polite"></ul>
+    <p class="error" id="intake-error" hidden></p>
+    <div class="actions">
+      <button class="btn primary" id="run" disabled>Besikta kontot</button>
+      <button class="btn" id="sample">Visa exempelprotokoll</button>
+    </div>
+    <details class="howto">
+      <summary>Så exporterar du rapporterna från Google Ads</summary>
+      <ol>
+        <li><strong>Kampanjer per dag.</strong> Öppna Kampanjer, välj Senaste 30 dagarna, lägg till segmentet Tid › Dag och kolumnerna Kostnad, Klick, Konverteringar, Konv.värde och Förlorad exponeringsandel (budget och rankning). Budget-kolumnen går inte alltid att kombinera med dessa; då räcker förlorad exponeringsandel. Ladda ned som CSV.</li>
+        <li><strong>Söktermer.</strong> Öppna Insikter och rapporter › Söktermer, samma datumintervall, ladda ned som CSV.</li>
+        <li><strong>Sökord.</strong> Öppna Sökord, lägg till kolumnerna Annonsgrupp, Matchningstyp och Kvalitetsresultat och ladda ned som CSV.</li>
+        <li><strong>Produkter (om ni kör Shopping eller Performance Max).</strong> Öppna Produkter, lägg till kolumnerna Artikel-id, Produkttitel, Kostnad, Klick, Konverteringar och Konv.värde och ladda ned som CSV.</li>
+      </ol>
+      <p class="note" style="margin-top:10px">Bara kampanjrapporten krävs. Varje extra rapport låser upp fler kontroller.</p>
+    </details>
+  </section>
+
+  <div id="example-note" class="example" hidden><strong>Exempel</strong><span>Protokollet nedan bygger på fiktiva exporter från ett renoveringsföretag i Stockholm. Ladda upp egna filer ovan för att besikta ditt konto.</span></div>
+
+  <section class="panel" id="result" hidden aria-labelledby="res-h">
+    <div class="panel-head"><h2 id="res-h">Protokoll</h2><span class="label">Gratis översikt</span></div>
+    <div class="proto-meta" id="meta"></div>
+    <div class="verdict">
+      <div class="score num" id="score"></div>
+      <div style="display:grid;gap:6px;min-width:0">
+        <div class="stamp" id="stamp"></div>
+        <p id="verdict-text"></p>
+      </div>
+      <div class="scale" aria-hidden="true">
+        <div class="scale-bar"><span></span><span></span><span></span><span></span><i id="marker"></i></div>
+        <div class="scale-legend"><span>Körförbud</span><span>Underkänd</span><span>Anmärkningar</span><span>Godkänd</span></div>
+      </div>
+    </div>
+    <div class="figures" id="figures"></div>
+    <div class="modules" id="modules"></div>
+  </section>
+
+  <section class="panel" id="bench-panel" hidden aria-labelledby="bench-h">
+    <div class="panel-head"><h2 id="bench-h">Du mot branschen</h2><span class="label" id="bench-industry"></span></div>
+    <div class="bench-wrap"><table class="bench"><thead><tr><th>Mått</th><th>Ditt konto</th><th>Branschsnitt</th><th>Jämförelse</th><th>Bedömning</th></tr></thead><tbody id="bench-body"></tbody></table></div>
+    <p class="note" id="bench-note"></p>
+  </section>
+
+  <section class="panel gate" id="gate" hidden aria-labelledby="gate-h">
+    <div class="panel-head"><h2 id="gate-h">Få sammanfattningen med de viktigaste åtgärderna</h2><span class="label">Steg 3 av 3</span></div>
+    <p>Vi visar de tre fynd som kostar mest, vad som hänt senaste veckan och om budgeten håller takten. Sammanfattningen skickas också till din e-post.</p>
+    <div id="gate-form" class="gate-form">
+      <div class="fields">
+        <div class="field"><label class="label" for="g-email">E-post</label><input type="email" id="g-email" autocomplete="email" required placeholder="namn@foretag.se"></div>
+        <div class="field"><label class="label" for="g-company">Företag</label><input type="text" id="g-company" autocomplete="organization" placeholder="Företagets namn"></div>
+        <div class="field"><label class="label" for="g-site">Webbplats</label><input type="text" id="g-site" autocomplete="url" placeholder="foretag.se"></div>
+      </div>
+      <label class="consent"><input type="checkbox" id="g-consent"> <span id="consent-text"></span></label>
+      <p class="error" id="gate-error" hidden></p>
+      <div class="actions"><button class="btn primary" type="button" id="gate-submit">Visa sammanfattningen</button><span class="note" id="gate-note"></span></div>
+    </div>
+  </section>
+
+  <section class="panel" id="summary" hidden aria-labelledby="sum-h">
+    <div class="panel-head"><h2 id="sum-h">Sammanfattning</h2><span class="label">De viktigaste fynden</span></div>
+    <div id="top"></div>
+    <div id="pace-sum"></div>
+    <div id="wow-sum"></div>
+  </section>
+
+  <section class="panel" id="full" hidden aria-labelledby="full-h">
+    <div class="panel-head"><h2 id="full-h">Fullständigt protokoll</h2><span class="lockchip" id="full-lock"><svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><rect x="2" y="5.5" width="8" height="5.5" rx="1" fill="currentColor"/><path d="M4 5.5V4a2 2 0 0 1 4 0v1.5" fill="none" stroke="currentColor" stroke-width="1.4"/></svg><span id="full-lock-text">Låst · ingår i hela rapporten</span></span></div>
+    <p class="muted" id="full-intro">Varje fynd med exakta söktermer, sökord och kampanjer, en färdig lista med negativa sökord och en åtgärdsplan i prioritetsordning. Vi går igenom den tillsammans på 30 minuter.</p>
+    <div id="narrative"></div>
+    <div id="full-list"></div>
+    <div class="buy" id="buy">
+      <div class="buy-head"><h3>Hela rapporten</h3><span class="price" id="price"></span></div>
+      <ul class="buy-list">
+        <li>Alla fynd med samtliga söktermer, sökord och kampanjer</li>
+        <li>Konkreta åtgärder för varje fynd, med siffror från ditt konto</li>
+        <li>Färdig lista med negativa sökord som CSV för Google Ads Editor</li>
+        <li>Rapporten som fil att spara, skriva ut eller dela med kollegor</li>
+      </ul>
+      <div class="actions" id="buy-actions"></div>
+      <p class="note" id="buy-note"></p>
+    </div>
+  </section>
+
+  <section class="panel deliver" id="deliver" hidden aria-labelledby="deliver-h">
+    <div class="panel-head"><h2 id="deliver-h">Din rapport</h2><span class="label">Upplåst</span></div>
+    <p>Hela rapporten finns ovan med alla rader och åtgärder. Spara den som fil och ladda upp de negativa sökorden direkt i Google Ads.</p>
+    <div class="actions dl-actions">
+      <span class="dl-group" role="group" aria-label="Ladda ner rapporten"><span class="dl-label">Ladda ner rapporten</span><button class="btn primary" type="button" id="dl-pdf">PDF</button><button class="btn primary" type="button" id="dl-xlsx">Excel</button><button class="btn" type="button" id="dl-csv">CSV</button></span>
+      <button class="btn" type="button" id="dl-neg">Negativa sökord (CSV)</button>
+      <button class="btn" type="button" id="copy-neg">Kopiera listan</button>
+      <button class="btn" type="button" id="dl-pause">Sökord att pausa (CSV)</button>
+      <button class="btn" type="button" id="dl-prod">Produkter att utesluta (CSV)</button>
+      <button class="btn" type="button" id="dl-titles">Optimerade titlar (CSV)</button>
+    </div>
+    <p class="note" id="dl-msg" role="status"></p>
+    <div id="neg-block">
+      <h3 class="sub-h">Negativa sökord <span class="label" id="neg-count"></span></h3>
+      <div class="coll" id="neg-coll"><div class="bench-wrap"><table class="leads-table neg-table"><thead><tr><th>Sökord</th><th>Matchning</th><th>Kampanj</th><th>Skäl</th><th>Kostnad/mån</th></tr></thead><tbody id="neg-body"></tbody></table></div><div id="neg-toggle"></div></div>
+      <details class="howto">
+        <summary>Så laddar du upp listan i Google Ads</summary>
+        <ol>
+          <li><strong>Google Ads Editor:</strong> ladda ned kontot, välj Konto › Importera › Från fil och välj CSV-filen. Granska ändringarna och klicka på Publicera.</li>
+          <li><strong>I webbläsaren:</strong> gå till Verktyg › Delat bibliotek › Listor med negativa sökord, skapa en lista och klistra in det du kopierat med "Kopiera listan". Koppla listan till kampanjerna.</li>
+          <li>Gå igenom listan innan du laddar upp. Ta bort sökord som är relevanta för er men råkade sakna konverteringar under perioden.</li>
+        </ol>
+      </details>
+    </div>
+    <div id="pause-block">
+      <h3 class="sub-h">Sökord att pausa <span class="label" id="pause-count"></span></h3>
+      <div class="coll" id="pause-coll"><div class="bench-wrap"><table class="leads-table neg-table"><thead><tr><th>Sökord</th><th>Matchning</th><th>Kampanj</th><th>Annonsgrupp</th><th>Skäl</th><th>Kostnad/mån</th></tr></thead><tbody id="pause-body"></tbody></table></div><div id="pause-toggle"></div></div>
+      <p class="note">Importera i Google Ads Editor (Konto › Importera › Från fil). Filen sätter status Pausad på sökorden. Säsongssökord är undantagna.</p>
+    </div>
+    <div id="prod-block">
+      <h3 class="sub-h">Produkter att utesluta <span class="label" id="prod-count"></span></h3>
+      <div class="coll" id="prod-coll"><div class="bench-wrap"><table class="leads-table neg-table"><thead><tr><th>Artikel-id</th><th>Produkt</th><th>Skäl</th><th>Klick</th><th>Kostnad/mån</th></tr></thead><tbody id="prod-body"></tbody></table></div><div id="prod-toggle"></div></div>
+      <p class="note" id="prod-note"></p>
+    </div>
+    <div id="titles-block">
+      <h3 class="sub-h">Optimerade produkttitlar <span class="label" id="titles-count"></span></h3>
+      <div class="coll" id="titles-coll"><div class="bench-wrap"><table class="leads-table titles-table"><thead><tr><th>Artikel-id</th><th>Nuvarande titel</th><th>Förslag</th><th>Varför</th></tr></thead><tbody id="titles-body"></tbody></table></div><div id="titles-toggle"></div></div>
+      <p class="note">Ladda upp CSV-filen som tilläggsflöde i Merchant Center (kolumnerna id och title). Det ersätter titeln i Google utan att ändra i webbutiken. Granska förslagen innan du laddar upp.</p>
+    </div>
+  </section>
+
+  <footer class="foot">
+    <p id="src-note"></p>
+    <p>Siffrorna är uppskattningar baserade på de exporter du laddat upp. Månadsbelopp är omräknade från rapportperioden.</p>
+  </footer>
+</div>
+<script type="module" src="/src/main.js"></script>
+</body>
+</html>

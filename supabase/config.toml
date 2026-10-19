@@ -1,0 +1,7 @@
+# Används bara om du deployar med Supabase CLI (`supabase functions deploy`).
+# Funktionerna är publika slutpunkter som skyddar sig själva, så JWT-kontroll är avstängd.
+[functions.submit-lead]
+verify_jwt = false
+
+[functions.verify-payment]
+verify_jwt = false

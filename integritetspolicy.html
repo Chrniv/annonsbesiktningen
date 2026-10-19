@@ -1,0 +1,73 @@
+<!doctype html>
+<html lang="sv">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Integritetspolicy – Annonsbesiktningen</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wdth,wght@75..100,400..700&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+  .policy { max-width: 720px }
+  .policy h2 { font-size: 19px; margin: 32px 0 8px }
+  .policy p, .policy li { font-size: 15px }
+  .policy ul { padding-left: 20px }
+  .policy table { width: 100%; border-collapse: collapse; font-size: 14px; margin: 8px 0 }
+  .policy td, .policy th { text-align: left; vertical-align: top; padding: 8px 10px 8px 0; border-bottom: 1px solid var(--line) }
+  .policy th { color: var(--muted); font-weight: 500; font-size: 13px }
+</style>
+</head>
+<body>
+<div class="band"><span>Annonsbesiktningen</span><span data-agency></span></div>
+<main class="wrap policy">
+  <header class="mast">
+    <h1>Integritetspolicy</h1>
+    <p class="lede">Så hanterar <span data-agency></span> dina uppgifter när du använder Annonsbesiktningen.</p>
+    <p class="small muted">Senast uppdaterad <span id="updated"></span></p>
+  </header>
+
+  <h2>Personuppgiftsansvarig</h2>
+  <p><span data-agency></span> är personuppgiftsansvarig. Du når oss på <span data-contact></span>.</p>
+
+  <h2>Filerna du laddar upp</h2>
+  <p>Rapporterna från Google Ads läses och analyseras i din egen webbläsare. De skickas inte till oss och sparas inte, så länge du inte själv väljer att få sammanfattningen (se nästa avsnitt).</p>
+
+  <h2>Det vi sparar när du lämnar din e-post</h2>
+  <p>När du fyller i e-post och kryssar i samtyckesrutan sparar vi:</p>
+  <ul>
+    <li>e-postadress, och företag och webbplats om du fyller i dem</li>
+    <li>dina svar på startfrågorna (bransch, kampanjtyper, mål och ungefärlig budget)</li>
+    <li>granskningens resultat, inklusive kampanjnamn, söktermer, sökord och produkttitlar från kontot</li>
+    <li>den samtyckestext du godkände och när</li>
+  </ul>
+  <p>Vi använder uppgifterna för att gå igenom resultatet med dig, kontakta dig om granskningen och leverera hela rapporten om du köper den. Den rättsliga grunden är ditt samtycke. Du kan när som helst återkalla det genom att mejla oss; då raderar vi uppgifterna.</p>
+  <p>Uppgifterna raderas automatiskt efter <span data-months></span> månader.</p>
+
+  <h2>Om du köper hela rapporten</h2>
+  <p>Betalningen hanteras av Stripe. Vi får uppgift om att betalningen är genomförd, din e-post och beloppet, men aldrig dina kortuppgifter. Uppgifter om köpet sparas i sju år enligt bokföringslagen. Den rättsliga grunden är att fullgöra avtalet med dig och vår rättsliga förpliktelse.</p>
+
+  <h2>Leverantörer som behandlar uppgifter åt oss</h2>
+  <table>
+    <thead><tr><th>Leverantör</th><th>Uppgift</th><th>Plats</th></tr></thead>
+    <tbody>
+      <tr><td>Supabase</td><td>Databas för leads och köp</td><td>EU (Stockholm)</td></tr>
+      <tr><td>Netlify</td><td>Driftar webbplatsen</td><td>USA, med EU:s standardavtalsklausuler</td></tr>
+      <tr><td>Stripe</td><td>Betalningar</td><td>EU och USA, med standardavtalsklausuler</td></tr>
+      <tr><td>Resend</td><td>Skickar e-postnotiser till oss om nya leads</td><td>USA, med standardavtalsklausuler</td></tr>
+      <tr><td>Google Fonts</td><td>Typsnitt på sidan (din IP-adress når Google)</td><td>USA</td></tr>
+    </tbody>
+  </table>
+  <p>Vi säljer aldrig dina uppgifter och delar dem inte med andra för deras egen marknadsföring.</p>
+
+  <h2>Kakor och lagring i webbläsaren</h2>
+  <p>Vi använder inga spårningskakor. Om du går vidare till betalning sparas granskningen tillfälligt i din webbläsare (localStorage) så att rapporten finns kvar när du kommer tillbaka från Stripe. Den raderas när rapporten har låsts upp.</p>
+
+  <h2>Dina rättigheter</h2>
+  <p>Du har rätt att få veta vilka uppgifter vi har om dig, få dem rättade eller raderade, begränsa behandlingen, få ut dem i ett maskinläsbart format och återkalla ditt samtycke. Mejla <span data-contact></span>. Är du missnöjd kan du klaga hos Integritetsskyddsmyndigheten (imy.se).</p>
+
+  <p class="small muted" style="margin-top:40px"><a href="/">Tillbaka till Annonsbesiktningen</a></p>
+</main>
+<script type="module" src="/src/policy.js"></script>
+</body>
+</html>
