@@ -8,6 +8,9 @@ let clientPromise = null;
 // supabase-js laddas bara när den behövs (admin), så att sidan förblir lätt för besökare
 function client() {
   if (!backendConfigured()) return Promise.resolve(null);
+  // Äldre inloggningslänkar landar på '#admin#access_token=...': ta bort '#admin' så att klienten hittar token
+  const h = location.hash, i = h.indexOf('access_token=');
+  if (i > 1 && h[i - 1] === '#') { try { history.replaceState(null, '', location.pathname + location.search + '#' + h.slice(i)); } catch (e) { /* ok */ } }
   if (!clientPromise) clientPromise = import('@supabase/supabase-js').then(({ createClient }) =>
     createClient(CONFIG.supabaseUrl, CONFIG.supabaseAnonKey, { auth: { persistSession: true, detectSessionInUrl: true, flowType: 'implicit' } }));
   return clientPromise;
@@ -44,7 +47,8 @@ export const backend = {
   async sendLoginLink(email) {
     const sb = await client();
     if (!sb) throw new Error('not_configured');
-    const redirectTo = location.origin + location.pathname + '#admin';
+    // Ingen #-del i adressen: Supabase lägger själv till #access_token=..., och ett befintligt #admin gör att token inte hittas
+    const redirectTo = location.origin + location.pathname + '?admin=1';
     const { error } = await sb.auth.signInWithOtp({ email, options: { emailRedirectTo: redirectTo, shouldCreateUser: true } });
     if (error) throw error;
   },

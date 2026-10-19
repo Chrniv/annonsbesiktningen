@@ -819,7 +819,7 @@ ${negTable}${pauseT}${prodT}${pace}${wow}
   const hasSession = () => { try { return Object.keys(localStorage).some(k => /^sb-.*-auth-token$/.test(k)); } catch (e) { return false; } };
   async function checkAdmin() {
     const h = location.hash;
-    const wantsAdmin = h === '#admin' || /access_token=|error_description=/.test(h);
+    const wantsAdmin = h === '#admin' || /access_token=|error_description=/.test(h) || /[?&]admin=1/.test(location.search);
     if (!backend.configured() || (!wantsAdmin && !hasSession())) return;
     if (!authWatch) { authWatch = true; backend.onAuthChange(() => { if (!state.admin) checkAdmin(); }); }
     const who = await backend.currentAdmin().catch(() => null);
