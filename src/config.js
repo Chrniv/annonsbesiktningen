@@ -11,13 +11,13 @@ const pick = (key, fallback) => (env[key] != null && env[key] !== '' ? env[key] 
 
 export const CONFIG = {
   productName: 'Annonsbesiktningen',
-  agencyName: pick('VITE_AGENCY_NAME', 'Din byrå'),          // byråns namn, visas på sidan och i rapporterna
-  contactEmail: pick('VITE_CONTACT_EMAIL', ''),              // kontaktadress i integritetspolicyn och sidfoten
+  agencyName: pick('VITE_AGENCY_NAME', 'Annonsbesiktningen'),          // byråns namn, visas på sidan och i rapporterna
+  contactEmail: pick('VITE_CONTACT_EMAIL', 'christerniven@gmail.com'),              // kontaktadress i integritetspolicyn och sidfoten
   reportPrice: pick('VITE_REPORT_PRICE', '495 kr'),          // pris för hela rapporten, visas på sidan
 
   // Supabase: Project Settings › API. Båda värdena är gjorda för att vara publika.
-  supabaseUrl: pick('VITE_SUPABASE_URL', ''),
-  supabaseAnonKey: pick('VITE_SUPABASE_ANON_KEY', ''),
+  supabaseUrl: pick('VITE_SUPABASE_URL', 'https://spcpauapilafiloadbot.supabase.co'),
+  supabaseAnonKey: pick('VITE_SUPABASE_ANON_KEY', 'sb_publishable_xp_1noF7gKjTtrUFrK9ikg_m9vXFBMP'),
 
   // Stripe Payment Link (https://buy.stripe.com/...). Tom = testläge med knappen "simulera betalning".
   // Efter betalning ska länken skicka tillbaka kunden till: https://DIN-SAJT/?betald=1&session_id={CHECKOUT_SESSION_ID}
