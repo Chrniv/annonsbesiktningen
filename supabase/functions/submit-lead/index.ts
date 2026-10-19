@@ -1,10 +1,10 @@
 // Tar emot en lead från sidan, sparar den och skickar (valfritt) ett mejl till dig.
 // Hemligheter (Edge Functions › Secrets): RESEND_API_KEY, NOTIFY_EMAIL, NOTIFY_FROM, SITE_URL, ALLOWED_ORIGINS. Alla valfria.
 import { handleSubmitLead, leadEmail } from '../_shared/logic.ts';
-import { restDb, origins } from '../_shared/rest.ts';
+import { restDb, origins, serverKey } from '../_shared/rest.ts';
 
 const env = (k: string) => Deno.env.get(k) || '';
-const db = restDb(env('SUPABASE_URL'), env('SUPABASE_SERVICE_ROLE_KEY'));
+const db = restDb(env('SUPABASE_URL'), serverKey(k => Deno.env.get(k)));
 
 async function notify(row: Record<string, unknown>, id: string) {
   const key = env('RESEND_API_KEY'), to = env('NOTIFY_EMAIL');

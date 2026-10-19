@@ -107,3 +107,13 @@ test('lead-mejlet innehåller det viktigaste', () => {
   assert.match(text, /4\s200 kr/);
   assert.match(text, /https:\/\/site\.se\/#admin/);
 });
+
+test('serverKey hittar nya och gamla nycklar; sb_-nycklar skickas utan Bearer', async () => {
+  const { serverKey } = await import('../supabase/functions/_shared/rest.ts');
+  assert.equal(serverKey(k => ({ SUPABASE_SECRET_KEYS: '{"default":"sb_secret_a"}', SUPABASE_SERVICE_ROLE_KEY: 'eyJ' } as any)[k]), 'sb_secret_a');
+  assert.equal(serverKey(k => ({ SUPABASE_SERVICE_ROLE_KEY: 'eyJ' } as any)[k]), 'eyJ');
+  let h: any;
+  const db = restDb('https://p.supabase.co', 'sb_secret_a', (async (u: string, i: any) => { h = i.headers; return new Response('[]'); }) as any);
+  await db.getLead('x');
+  assert.equal(h.apikey, 'sb_secret_a'); assert.equal(h.Authorization, undefined);
+});

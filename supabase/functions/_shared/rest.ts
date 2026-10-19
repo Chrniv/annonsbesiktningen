@@ -3,7 +3,8 @@ import type { Db, Json } from './logic.ts';
 
 export function restDb(url: string, key: string, fetchFn: typeof fetch = fetch): Db {
   const base = url.replace(/\/$/, '') + '/rest/v1';
-  const headers = { apikey: key, Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' };
+  // Nya nycklar (sb_secret_...) skickas bara som apikey; äldre service_role-JWT även som Bearer
+  const headers: Record<string, string> = key.startsWith('sb_') ? { apikey: key, 'Content-Type': 'application/json' } : { apikey: key, Authorization: `Bearer ${key}`, 'Content-Type': 'application/json' };
   async function call(path: string, init: RequestInit = {}): Promise<Response> {
     const res = await fetchFn(base + path, { ...init, headers: { ...headers, ...(init.headers || {}) } });
     if (!res.ok && res.status !== 409) throw new Error(`db ${res.status}: ${await res.text()}`);
@@ -34,6 +35,13 @@ export function restDb(url: string, key: string, fetchFn: typeof fetch = fetch):
       return res.status === 409 ? 'exists' : 'inserted';
     }
   };
+}
+
+// Servernyckeln: nya projekt har SUPABASE_SECRET_KEYS (JSON), äldre SUPABASE_SERVICE_ROLE_KEY
+export function serverKey(get: (k: string) => string | undefined): string {
+  const raw = get('SUPABASE_SECRET_KEYS');
+  if (raw) { try { const o = JSON.parse(raw); const v = o.default || Object.values(o)[0]; if (typeof v === 'string' && v) return v; } catch { /* inte JSON */ } }
+  return get('SUPABASE_SECRET_KEY') || get('SUPABASE_SERVICE_ROLE_KEY') || '';
 }
 
 export const origins = (v: string | undefined) => (v || '').split(',').map(s => s.trim()).filter(Boolean);

@@ -87,7 +87,7 @@ function leadEmail(row, id, siteUrl) {
 // supabase/functions/_shared/rest.ts
 function restDb(url, key, fetchFn = fetch) {
   const base = url.replace(/\/$/, "") + "/rest/v1";
-  const headers = { apikey: key, Authorization: `Bearer ${key}`, "Content-Type": "application/json" };
+  const headers = key.startsWith("sb_") ? { apikey: key, "Content-Type": "application/json" } : { apikey: key, Authorization: `Bearer ${key}`, "Content-Type": "application/json" };
   async function call(path, init = {}) {
     const res = await fetchFn(base + path, { ...init, headers: { ...headers, ...init.headers || {} } });
     if (!res.ok && res.status !== 409) throw new Error(`db ${res.status}: ${await res.text()}`);
@@ -119,11 +119,23 @@ function restDb(url, key, fetchFn = fetch) {
     }
   };
 }
+function serverKey(get) {
+  const raw = get("SUPABASE_SECRET_KEYS");
+  if (raw) {
+    try {
+      const o = JSON.parse(raw);
+      const v = o.default || Object.values(o)[0];
+      if (typeof v === "string" && v) return v;
+    } catch {
+    }
+  }
+  return get("SUPABASE_SECRET_KEY") || get("SUPABASE_SERVICE_ROLE_KEY") || "";
+}
 var origins = (v) => (v || "").split(",").map((s) => s.trim()).filter(Boolean);
 
 // supabase/functions/submit-lead/index.ts
 var env = (k) => Deno.env.get(k) || "";
-var db = restDb(env("SUPABASE_URL"), env("SUPABASE_SERVICE_ROLE_KEY"));
+var db = restDb(env("SUPABASE_URL"), serverKey((k) => Deno.env.get(k)));
 async function notify(row, id) {
   const key = env("RESEND_API_KEY"), to = env("NOTIFY_EMAIL");
   if (!key || !to) return;

@@ -1,10 +1,10 @@
 // Kontrollerar en betalning hos Stripe och låser upp hela rapporten.
 // Hemligheter (Edge Functions › Secrets): STRIPE_SECRET_KEY (krävs), STRIPE_PAYMENT_LINK_ID (valfri, plink_...), ALLOWED_ORIGINS (valfri).
 import { handleVerifyPayment } from '../_shared/logic.ts';
-import { restDb, origins } from '../_shared/rest.ts';
+import { restDb, origins, serverKey } from '../_shared/rest.ts';
 
 const env = (k: string) => Deno.env.get(k) || '';
-const db = restDb(env('SUPABASE_URL'), env('SUPABASE_SERVICE_ROLE_KEY'));
+const db = restDb(env('SUPABASE_URL'), serverKey(k => Deno.env.get(k)));
 
 async function stripeSession(id: string) {
   const res = await fetch(`https://api.stripe.com/v1/checkout/sessions/${encodeURIComponent(id)}`, {
