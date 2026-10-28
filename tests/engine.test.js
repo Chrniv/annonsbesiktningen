@@ -128,3 +128,26 @@ test('osäkra fynd ger bredare intervall än säkra', () => {
   assert.equal(E.savingsHeadline({ ci: none }), null);
   assert.match(E.savingsHeadline({ ci: { level: 0.9, low: 0, high: 500, median: 100 } }).lead, /datan räcker inte/);
 });
+
+test('varumärkeskampanjer hålls utanför branschjämförelsen och kontots snitt', () => {
+  const day = i => `2026-09-${String(i + 1).padStart(2, '0')}`;
+  const camp = 'Campaign,Campaign type,Day,Clicks,Impr.,Currency code,Cost,Conversions,Conv. value\n' + [
+    ...Array.from({ length: 30 }, (_, i) => `[S] [B] - Brand,Search,${day(i)},400,1000,SEK,200,40,8000`),
+    ...Array.from({ length: 30 }, (_, i) => `Sök – Generiskt,Search,${day(i)},50,1000,SEK,500,2,1000`)
+  ].join('\n');
+  const r = E.analyze([E.readReport('c.csv', camp)], { industry: 'shopping' });
+  const b = r.modules.performance.benchmark;
+  assert.match(b.scope, /utan varumärke/);
+  assert.ok(Math.abs(b.metrics.ctr.you - 5) < 0.01, 'CTR räknas bara på den generiska kampanjen (50/1000)');
+  assert.ok(r.findings.some(f => f.key === 'ctr'), 'låg generisk CTR döljs inte längre av varumärket');
+  assert.deepEqual(r.modules.performance.brandCampaigns, ['[S] [B] - Brand']);
+});
+
+test('varumärkeskampanj utan "brand" i namnet känns igen från varumärkesnamnet', () => {
+  const day = i => `2026-09-${String(i + 1).padStart(2, '0')}`;
+  const camp = 'Campaign,Campaign type,Day,Clicks,Impr.,Currency code,Cost,Conversions\n' + ['Sök 1', 'Sök 2'].flatMap(c => Array.from({ length: 30 }, (_, i) => `${c},Search,${day(i)},100,1000,SEK,100,5`)).join('\n');
+  const terms = 'Search term,Campaign,Currency code,Clicks,Impr.,Cost,Conversions\nfotohörnan,Sök 1,SEK,500,900,400,60\nfotohörnan rabattkod,Sök 1,SEK,50,90,40,6\nfotobok,Sök 2,SEK,300,3000,900,30\n';
+  const reps = [E.readReport('c.csv', camp), E.readReport('t.csv', terms)];
+  assert.deepEqual(E.analyze(reps, { industry: 'shopping' }).modules.performance.brandCampaigns, []);
+  assert.deepEqual(E.analyze(reps, { industry: 'shopping', brandName: 'Fotohörnan' }).modules.performance.brandCampaigns, ['Sök 1']);
+});
