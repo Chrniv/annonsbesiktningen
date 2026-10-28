@@ -1,6 +1,7 @@
 /* Annonsbesiktningen – analysmotor. Ren logik utan DOM: läser Google Ads-exporter och räknar fram fynd. */
 /* ===== Annonsbesiktningen — analysmotor (körs helt i webbläsaren) ===== */
 import { CONFIG } from './config.js';
+import { badLuckChance, minCostWithoutConversion, certaintyText, confidenceTier, shrunkCpa, shrunkRate, shrunkExcess, probBetter } from './stats.js';
 
 /* Branschsnitt: CTR %, CVR %, CPC USD, CPL USD */
 const BENCH = [
@@ -272,6 +273,14 @@ const sum = (a, k) => a.reduce((s, o) => s + (o[k] || 0), 0);
 const div = (a, b) => (b > 0 ? a / b : null);
 const pct = (a, b) => (a != null && b != null && b !== 0 ? (a - b) / Math.abs(b) * 100 : null);
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+const STATS = Object.assign({ flagLevel: 0.15, ngramLevel: 0.10, sureLevel: 0.05, priorConversions: 1, winnerProbability: 0.8 }, CONFIG.stats || {});
+// Referens-CPA för ett objekt: kontots kostnad per konvertering, eller (e-handel) den CPA som objektet behöver
+// med sitt eget ordervärde för att nå referens-ROAS. Då blir både leads- och e-handelskonton samma test.
+const refCpaFor = (o, cpa, roas) => (roas > 0 && o.conv > 0 && o.value > 0 ? (o.value / o.conv) / roas : cpa);
+// Kort säkerhetstext till listor: "97 % säkert"
+const sure = p => (p == null ? '' : ' · ' + certaintyText(p));
+// Säkerhetsnivå för listor och exporter: 'hög', 'medel' eller null (bedömt på innebörd, inte på siffror)
+const confOf = p => (p == null ? null : confidenceTier(p, STATS) || 'låg');
 function totals(rows) {
   const t = { cost: sum(rows, 'cost'), impr: sum(rows, 'impr'), clicks: sum(rows, 'clicks'), conv: sum(rows, 'conv'), value: sum(rows, 'value') };
   t.ctr = div(t.clicks, t.impr) != null ? t.clicks / t.impr * 100 : null;
@@ -388,8 +397,8 @@ function analyze(reports, opts) {
   }
   const sevFromRatio = r => (r < 0.5 ? 'crit' : 'warn');
   if (bm.ctr.ratio != null && bm.ctr.ratio < 0.8) add({ module: 'performance', sev: sevFromRatio(bm.ctr.ratio), key: 'ctr', title: `Klickfrekvensen ligger ${Math.round((1 - bm.ctr.ratio) * 100)} % under branschsnittet`, freeText: 'Annonserna lockar färre klick än konkurrenternas, vilket ofta höjer klickpriset.', detail: 'Annonsgrupper med lägst CTR och annonstexter som behöver skrivas om.', items: campAgg.filter(c => c.ctr != null).sort((a, b) => a.ctr - b.ctr).slice(0, 5).map(c => ({ name: c.name, value: `CTR ${fmtPct(c.ctr)}` })) });
-  if (bm.cvr.ratio != null && bm.cvr.ratio < 0.8 && acct.conv > 0) add({ module: 'performance', sev: sevFromRatio(bm.cvr.ratio), key: 'cvr', title: `Konverteringsgraden ligger ${Math.round((1 - bm.cvr.ratio) * 100)} % under branschsnittet`, freeText: 'Trafiken som kommer in blir mer sällan kunder än hos jämförbara annonsörer.', detail: 'Kampanjer med lägst konverteringsgrad och landningssidor att se över.', items: campAgg.filter(c => c.cvr != null && c.clicks > 30).sort((a, b) => a.cvr - b.cvr).slice(0, 5).map(c => ({ name: c.name, value: `CVR ${fmtPct(c.cvr)}` })) });
-  if (bm.cpa.ratio != null && bm.cpa.ratio < 0.8) add({ module: 'performance', sev: sevFromRatio(bm.cpa.ratio), key: 'cpa', title: `Kostnad per konvertering är ${Math.round((1 / bm.cpa.ratio - 1) * 100)} % högre än branschsnittet`, freeText: 'Varje affär eller lead kostar mer än hos jämförbara annonsörer.', detail: 'Kampanjer som driver upp kostnaden per konvertering.', items: campAgg.filter(c => c.cpa != null).sort((a, b) => b.cpa - a.cpa).slice(0, 5).map(c => ({ name: c.name, value: `${fmtKr(c.cpa)} / konv.` })) });
+  if (bm.cvr.ratio != null && bm.cvr.ratio < 0.8 && acct.conv > 0) add({ module: 'performance', sev: sevFromRatio(bm.cvr.ratio), key: 'cvr', title: `Konverteringsgraden ligger ${Math.round((1 - bm.cvr.ratio) * 100)} % under branschsnittet`, freeText: 'Trafiken som kommer in blir mer sällan kunder än hos jämförbara annonsörer.', detail: 'Kampanjer med lägst konverteringsgrad och landningssidor att se över.', items: campAgg.filter(c => c.cvr != null && c.clicks > 30).map(c => ({ c, s: shrunkRate(c.conv, c.clicks, acct.conv / acct.clicks, STATS.priorConversions) })).sort((a, b) => a.s - b.s).slice(0, 5).map(({ c }) => ({ name: c.name, value: `CVR ${fmtPct(c.cvr)}` })) });
+  if (bm.cpa.ratio != null && bm.cpa.ratio < 0.8) add({ module: 'performance', sev: sevFromRatio(bm.cpa.ratio), key: 'cpa', title: `Kostnad per konvertering är ${Math.round((1 / bm.cpa.ratio - 1) * 100)} % högre än branschsnittet`, freeText: 'Varje affär eller lead kostar mer än hos jämförbara annonsörer.', detail: 'Kampanjer som driver upp kostnaden per konvertering.', items: campAgg.filter(c => c.cpa != null).sort((a, b) => shrunkCpa(b.cost, b.conv, acctCPA, STATS.priorConversions) - shrunkCpa(a.cost, a.conv, acctCPA, STATS.priorConversions)).slice(0, 5).map(c => ({ name: c.name, value: `${fmtKr(c.cpa)} / konv.` })) });
 
   // Ineffektiv spend-koncentration
   if (campAgg.length > 1 && acct.cost > 0 && acct.conv > 0) {
@@ -403,10 +412,14 @@ function analyze(reports, opts) {
   const ecom = acct.value > 0 && acct.roas != null;
   if (campAgg.length > 1 && acct.cost > 0 && acct.conv > 0) {
     const already = new Set((findings.find(f => f.key === 'concentration') || { items: [] }).items.map(i => i.name));
+    // Klart sämre än kontot OCH skillnaden ska inte gå att förklara med slump (risken att det är otur högst STATS.flagLevel).
+    const cRef = c => refCpaFor(c, acctCPA, ecom ? acct.roas : null);
     const bad = campAgg.filter(c => !already.has(c.name) && (c.cost / acct.cost >= 0.05 || (acctCPA && c.cost >= acctCPA * 5)) && !isBrandCamp(c.name) && (
-      ecom ? (c.roas != null ? c.roas < acct.roas * 0.5 : c.cost >= acctCPA * 3) : (c.conv > 0 ? c.cpa >= acctCPA * 2 : c.cost >= acctCPA * 3)));
+      ecom ? (c.roas != null ? c.roas < acct.roas * 0.5 : c.cost >= acctCPA * 3) : (c.conv > 0 ? c.cpa >= acctCPA * 2 : c.cost >= acctCPA * 3))
+      && badLuckChance(c.cost, c.conv, cRef(c)) <= STATS.flagLevel);
     if (bad.length) {
-      const excess = bad.reduce((s, c) => s + Math.max(0, ecom && acct.roas ? c.cost - (c.value || 0) / acct.roas : c.cost - c.conv * acctCPA), 0) * mf;
+      // Merkostnad efter krympning mot snittet: lite data ger en försiktigare siffra
+      const excess = bad.reduce((s, c) => s + shrunkExcess(c.cost, c.conv, cRef(c), STATS.priorConversions), 0) * mf;
       bad.sort((a, b) => b.cost - a.cost);
       const top = bad[0];
       add({ module: 'performance', sev: excess > acct.cost * mf * 0.1 ? 'crit' : 'warn', key: 'campCpa', title: ecom ? `${bad.length} ${bad.length === 1 ? 'kampanj har' : 'kampanjer har'} ROAS under hälften av kontots snitt` : `${bad.length} ${bad.length === 1 ? 'kampanj har' : 'kampanjer har'} mer än dubbelt så hög kostnad per konvertering som kontot`,
@@ -422,7 +435,9 @@ function analyze(reports, opts) {
   if (margin && acct.value > 0 && campAgg.length) {
     const be = 1 / margin;
     const lossOf = c => Math.max(0, c.cost - (c.value || 0) * margin); // annonskostnad som bruttovinsten inte täcker
-    const unp = campAgg.filter(c => !isBrandCamp(c.name) && c.cost >= Math.max(acctCPA * 3, M(300) / mfAcct) && (c.roas || 0) < be * 0.95).sort((a, b) => lossOf(b) - lossOf(a));
+    // Under break-even, och inte bara av otur: testas mot den CPA som kampanjen behöver med sitt eget ordervärde för att gå jämnt ut
+    const unp = campAgg.filter(c => !isBrandCamp(c.name) && c.cost >= Math.max(acctCPA * 3, M(300) / mfAcct) && (c.roas || 0) < be * 0.95
+      && badLuckChance(c.cost, c.conv, refCpaFor(c, acctCPA, be)) <= STATS.flagLevel).sort((a, b) => lossOf(b) - lossOf(a));
     perf.grossProfitMonthly = (acct.value * margin - acct.cost) * mfAcct;
     if (unp.length) {
       const loss = unp.reduce((s2, c) => s2 + lossOf(c), 0) * mfAcct;
@@ -473,11 +488,14 @@ function analyze(reports, opts) {
     const agg = [...groupBy(pool, key)].map(([name, rows]) => ({ name, ...totals(rows), matchType: rows[0].matchType, campaign: rows[0].campaign }));
     const poolCost = sum(agg, 'cost');
     const refCPA = acctCPA || div(sum(agg, 'cost'), sum(agg, 'conv')) || 300;
-    // Statistisk tröskel: kostnaden motsvarar 1,5 konverteringar (risken att det är otur är under 25 %).
-    // Söktermer om sådant kontot medvetet säljer kräver dubbelt så mycket innan de föreslås som negativa.
-    const thr = Math.max(refCPA * 1.5, M(30));
+    // Statistisk tröskel: en sökterm utan konvertering flaggas först när risken att det är otur är högst STATS.flagLevel.
+    // Presterade den som kontots snitt borde den ha fått kostnad / CPA konverteringar; chansen att få 0 är e^(−kostnad/CPA).
+    // Söktermer om sådant kontot medvetet säljer kräver hög säkerhet (STATS.sureLevel) innan de föreslås som negativa.
+    agg.forEach(t => { t.risk = t.conv === 0 ? badLuckChance(t.cost, 0, refCPA) : null; });
+    const thr = Math.max(minCostWithoutConversion(refCPA, STATS.flagLevel), M(30));
+    const thrCore = Math.max(minCostWithoutConversion(refCPA, STATS.sureLevel), M(30));
     const core = t => t.name.toLowerCase().split(/[^a-z0-9åäöæøéü]+/).some(w => w.length >= 4 && sells(w));
-    const expensive = agg.filter(t => t.conv === 0 && t.cost >= (core(t) ? thr * 2 : thr));
+    const expensive = agg.filter(t => t.conv === 0 && t.cost >= (core(t) ? thrCore : thr));
     const irrelevant = agg.filter(t => t.conv === 0 && t.cost > 0 && NEG_PATTERNS.some(p => p.re.test(t.name)) && !expensive.includes(t));
     const tail = agg.filter(t => t.conv === 0 && !expensive.includes(t) && !irrelevant.includes(t));
     const wasteSet = [...expensive, ...irrelevant];
@@ -489,11 +507,13 @@ function analyze(reports, opts) {
     // Negativa sökord: gemensamma ord från irrelevanta söktermer som frasmatchning, dyra söktermer som exakt matchning
     if (sts.length) {
       const negs = new Map();
-      const addNeg = (keyword, match, campaign, reason, cost) => {
+      // risk = risken att det är otur (null för irrelevanta mönster, som bedöms på innebörd och inte på siffror).
+      // Slås flera söktermer utan konvertering ihop multipliceras riskerna: e^(−a) · e^(−b) = e^(−(a+b)).
+      const addNeg = (keyword, match, campaign, reason, cost, risk = null) => {
         const k = [keyword, match, campaign].join('|');
         const cur = negs.get(k);
-        if (cur) { cur.costMonthly += cost; cur.terms += 1; }
-        else negs.set(k, { keyword, match, campaign, reason, costMonthly: cost, terms: 1 });
+        if (cur) { cur.costMonthly += cost; cur.terms += 1; cur.risk = cur.risk == null ? risk : risk == null ? cur.risk : cur.risk * risk; }
+        else negs.set(k, { keyword, match, campaign, reason, costMonthly: cost, terms: 1, risk });
       };
       irrelevant.forEach(t => {
         const p = NEG_PATTERNS.find(p => p.re.test(t.name));
@@ -503,14 +523,14 @@ function analyze(reports, opts) {
       expensive.forEach(t => {
         const p = NEG_PATTERNS.find(p => p.re.test(t.name));
         const m = p && t.name.match(p.re);
-        if (m) addNeg(m[0].toLowerCase(), 'phrase', t.campaign, 'Irrelevant: ' + p.label, t.cost * mf);
-        else addNeg(t.name.toLowerCase(), 'exact', t.campaign, 'Dyr utan konvertering', t.cost * mf);
+        if (m) addNeg(m[0].toLowerCase(), 'phrase', t.campaign, 'Irrelevant: ' + p.label, t.cost * mf, t.risk);
+        else addNeg(t.name.toLowerCase(), 'exact', t.campaign, 'Dyr utan konvertering', t.cost * mf, t.risk);
       });
       waste.negatives = [...negs.values()].sort((a, b) => b.costMonthly - a.costMonthly);
     }
     waste.poolCount = agg.length;
     const label = sts.length ? 'söktermer' : 'sökord';
-    if (expensive.length) add({ module: 'waste', sev: sum(expensive, 'cost') / denom > 0.1 ? 'crit' : 'warn', key: 'expensive', title: `${expensive.length} ${label} har kostat minst ${fmtKr(thr)} var utan en enda konvertering`, freeText: `Tillsammans motsvarar det cirka ${fmtKr(sum(expensive, 'cost') * mf)} per månad.`, detail: `${label[0].toUpperCase() + label.slice(1)} att lägga till som negativa sökord eller begränsa med matchningstyp.`, impact: { kind: 'waste', sek: sum(expensive, 'cost') * mf }, items: expensive.sort((a, b) => b.cost - a.cost).map(t => ({ name: t.name, value: fmtKr(t.cost * mf) + '/mån' })) });
+    if (expensive.length) add({ module: 'waste', sev: sum(expensive, 'cost') / denom > 0.1 ? 'crit' : 'warn', key: 'expensive', title: `${expensive.length} ${label} har kostat minst ${fmtKr(thr)} var utan en enda konvertering`, freeText: `Tillsammans motsvarar det cirka ${fmtKr(sum(expensive, 'cost') * mf)} per månad.`, detail: `${label[0].toUpperCase() + label.slice(1)} att lägga till som negativa sökord eller begränsa med matchningstyp.`, impact: { kind: 'waste', sek: sum(expensive, 'cost') * mf }, items: expensive.sort((a, b) => b.cost - a.cost).map(t => ({ name: t.name, value: fmtKr(t.cost * mf) + '/mån' + sure(t.risk), risk: t.risk })) });
     if (irrelevant.length) {
       const cats = [...new Set(irrelevant.map(t => (NEG_PATTERNS.find(p => p.re.test(t.name)) || {}).label))].filter(Boolean);
       add({ module: 'waste', sev: 'warn', key: 'irrelevant', title: `${irrelevant.length} irrelevanta ${label} (${cats.join(', ')}) visar dina annonser`, freeText: `Söker man på sådant köper man sällan. Cirka ${fmtKr(sum(irrelevant, 'cost') * mf)} per månad.`, detail: 'Färdig lista med negativa sökord att lägga in på kontonivå.', impact: { kind: 'waste', sek: sum(irrelevant, 'cost') * mf }, items: irrelevant.sort((a, b) => b.cost - a.cost).map(t => ({ name: t.name, value: fmtKr(t.cost * mf) + '/mån' })) });
@@ -535,8 +555,11 @@ function analyze(reports, opts) {
         const gs = new Set([...w, ...w.slice(0, -1).map((x, i) => x + ' ' + w[i + 1])]);
         gs.forEach(g => { const n = gram[g] || (gram[g] = { g, cost: 0, conv: 0, value: 0, clicks: 0, terms: [] }); n.cost += t.cost; n.conv += t.conv; n.value += t.value || 0; n.clicks += t.clicks; n.terms.push(t); });
       });
-      // Minst tre olika söktermer, kostnad motsvarande minst två konverteringar och ingen försäljning (sannolikheten att det är otur är då under 15 %)
-      const cand = Object.values(gram).filter(n => n.terms.length >= 3 && n.conv === 0 && n.cost >= refCPA * 2).sort((a, b) => b.cost - a.cost);
+      // Minst tre olika söktermer, ingen försäljning och högst STATS.ngramLevel risk att det är otur.
+      // Strängare än för enskilda söktermer: vi testar hundratals ord, och med många test ser några dåliga ut av ren slump.
+      const ngThr = minCostWithoutConversion(refCPA, STATS.ngramLevel);
+      const cand = Object.values(gram).filter(n => n.terms.length >= 3 && n.conv === 0 && n.cost >= ngThr).sort((a, b) => b.cost - a.cost);
+      cand.forEach(n => { n.risk = badLuckChance(n.cost, 0, refCPA); });
       const picked = [], covered = new Set(), coreWords = [];
       const candSet = new Set(cand.map(n => n.g));
       for (const n of cand) {
@@ -552,15 +575,15 @@ function analyze(reports, opts) {
       if (picked.length) {
         const extra = [...covered].filter(name => !counted.has(name)).reduce((s2, name) => s2 + (agg.find(t => t.name === name) || { cost: 0 }).cost, 0);
         const total = picked.reduce((s2, n) => s2 + n.cost, 0);
-        waste.ngrams = picked.map(n => ({ word: n.g, terms: n.terms.length, costMonthly: n.cost * mf, clicks: n.clicks }));
-        if (waste.negatives) picked.forEach(n => waste.negatives.push({ keyword: n.g, match: 'phrase', campaign: '', reason: `Ordet finns i ${n.terms.length} söktermer utan försäljning`, costMonthly: n.cost * mf, terms: n.terms.length }));
+        waste.ngrams = picked.map(n => ({ word: n.g, terms: n.terms.length, costMonthly: n.cost * mf, clicks: n.clicks, risk: n.risk }));
+        if (waste.negatives) picked.forEach(n => waste.negatives.push({ keyword: n.g, match: 'phrase', campaign: '', reason: `Ordet finns i ${n.terms.length} söktermer utan försäljning`, costMonthly: n.cost * mf, terms: n.terms.length, risk: n.risk }));
         if (waste.negatives) waste.negatives.sort((a, b) => b.costMonthly - a.costMonthly);
         add({ module: 'waste', sev: total / denom > 0.05 ? 'crit' : 'warn', key: 'ngrams',
           title: `${picked.length} ord i söktermerna har kostat ${fmtKr(total * mf)} per månad utan en enda försäljning`,
           freeText: `Var för sig är söktermerna för små för att märkas, men tillsammans är de det. Det största är "${picked[0].g}" i ${picked[0].terms.length} olika söktermer.`,
           detail: 'Ord och ordpar som återkommer i många söktermer utan konverteringar. Lägg dem som negativa sökord med frasmatchning, efter att ha kontrollerat att ni inte säljer det de syftar på.',
           impact: { kind: 'waste', sek: extra * mf },
-          items: picked.map(n => ({ name: `"${n.g}"`, value: `${fmtKr(n.cost * mf)}/mån, ${n.terms.length} söktermer, ${nf0.format(n.clicks)} klick` })) });
+          items: picked.map(n => ({ name: `"${n.g}"`, value: `${fmtKr(n.cost * mf)}/mån, ${n.terms.length} söktermer, ${nf0.format(n.clicks)} klick${sure(n.risk)}`, risk: n.risk })) });
       }
       // Ord för sådant kontot säljer, som ändå inte gett någon försäljning: inte negativa sökord, men bud, flöde eller landningssida att se över
       if (coreWords.length) {
@@ -569,18 +592,21 @@ function analyze(reports, opts) {
           freeText: `Det gäller ord som ni har egna sökord eller kampanjer för, till exempel "${coreWords[0].g}". Kunderna söker och klickar, men köper inte.`,
           detail: 'Inte negativa sökord: se över bud, pris, produktbild och landningssida för de här produkterna, eller sänk buden tills de lönar sig.',
           impact: { kind: 'potential', sek: tot * mf },
-          items: coreWords.map(n => ({ name: `"${n.g}"`, value: `${fmtKr(n.cost * mf)}/mån, ${n.terms.length} söktermer, ${nf0.format(n.clicks)} klick` })) });
+          items: coreWords.map(n => ({ name: `"${n.g}"`, value: `${fmtKr(n.cost * mf)}/mån, ${n.terms.length} söktermer, ${nf0.format(n.clicks)} klick${sure(n.risk)}`, risk: n.risk })) });
       }
       // Söktermer som säljer bra men inte finns som sökord: tillväxt, inte besparing
       const kwSet = new Set(kws.map(k => (k.keyword || '').toLowerCase().replace(/[\[\]"+]/g, '').trim()));
       const acctROAS = acct.value > 0 ? acct.value / acct.cost : null;
+      // En sökterm med två lyckosamma konverteringar ser ut som en vinnare men är oftast tur. Krav: minst STATS.winnerProbability
+      // sannolikhet att den verkligen är bättre än kontot (efter krympning mot snittet), inte bara att siffran råkar vara det.
+      agg.forEach(t => { t.pBetter = t.conv > 0 && (!acctROAS || t.value > 0) ? probBetter(t.cost, t.conv, refCpaFor(t, refCPA, acctROAS), STATS.priorConversions) : 0; });
       const opp = agg.filter(t => t.conv >= 2 && !kwSet.has(t.name.toLowerCase()) && !t.name.toLowerCase().split(/[^a-z0-9åäö]+/).some(w => DETECTED_OWN.has(w))
         && !/(added|tillagd|excluded|utesl|exkl)/.test(t.added || '')
-        && (acctROAS ? (t.value || 0) / (t.cost || 1e-9) >= acctROAS : (t.cost / t.conv) <= refCPA)).sort((a, b) => b.conv - a.conv).slice(0, 50);
+        && t.pBetter >= STATS.winnerProbability).sort((a, b) => b.conv - a.conv).slice(0, 50);
       if (opp.length >= 3) add({ module: 'performance', sev: 'info', key: 'kwOpp', title: `${opp.length} söktermer säljer bättre än snittet men finns inte som egna sökord`,
         freeText: `Tillsammans ${nf0.format(Math.round(sum(opp, 'conv') * mf))} konverteringar per månad. Som egna sökord kan de få egna bud och egna annonstexter.`,
-        detail: 'Söktermer med minst två konverteringar och bättre lönsamhet än kontot, som inte redan är sökord. Lägg till dem i en sökkampanj med exakt matchning.',
-        items: opp.map(t => ({ name: t.name, value: `${nf0.format(Math.round(t.conv * mf * 10) / 10)} konv./mån${acctROAS ? `, ROAS ${nf2.format((t.value || 0) / t.cost)}` : `, ${fmtKr(t.cost / t.conv)}/konv.`}` })) });
+        detail: `Söktermer med minst två konverteringar som med minst ${Math.round(STATS.winnerProbability * 100)} % sannolikhet är lönsammare än kontot, och som inte redan är sökord. Lägg till dem i en sökkampanj med exakt matchning.`,
+        items: opp.map(t => ({ name: t.name, value: `${nf0.format(Math.round(t.conv * mf * 10) / 10)} konv./mån${acctROAS ? `, ROAS ${nf2.format((t.value || 0) / t.cost)}` : `, ${fmtKr(t.cost / t.conv)}/konv.`} · ${Math.min(99, Math.floor(t.pBetter * 100))} % säkert bättre`, pBetter: t.pBetter })) });
     }
     if (tail.length > 10 && sum(tail, 'cost') / denom > 0.08) add({ module: 'waste', sev: 'info', key: 'tail', title: `${tail.length} ${label} med få klick och inga konverteringar`, freeText: `Var för sig små belopp, totalt cirka ${fmtKr(sum(tail, 'cost') * mf)} per månad.`, detail: 'Mönster i den långa svansen som kan stängas med frasmatchning eller negativa sökord.', items: tail.sort((a, b) => b.cost - a.cost).slice(0, 15).map(t => ({ name: t.name, value: fmtKr(t.cost * mf) + '/mån' })) });
     // Bred matchning
@@ -600,17 +626,22 @@ function analyze(reports, opts) {
     const ref = acctCPA || div(sum(kws, 'cost'), sum(kws, 'conv')) || 300;
     const kAgg = [...groupBy(kws.map(k => Object.assign({ _k: [k.campaign, k.adGroup, k.keyword, k.matchType].join('|') }, k)), '_k')].map(([, rows]) => ({ ...rows[0], ...totals(rows), status: rows[0].status }));
     const live = kAgg.filter(k => !/(paused|pausad|removed|borttagen)/.test(k.status || ''));
-    const zero = live.filter(k => k.conv === 0 && k.cost >= Math.max(ref * 2, M(50)));
-    const dear = live.filter(k => k.conv > 0 && k.cost >= ref * 3 && k.cpa >= ref * 2.5);
+    // Utan konvertering: flaggas när risken att det är otur är högst STATS.flagLevel.
+    // Med konverteringar: kostnaden per konvertering ska vara minst 2,5 gånger snittet OCH skillnaden får inte gå att förklara med slump.
+    const kwThr = Math.max(minCostWithoutConversion(ref, STATS.flagLevel), M(50));
+    live.forEach(k => { k.risk = badLuckChance(k.cost, k.conv, ref); });
+    const zero = live.filter(k => k.conv === 0 && k.cost >= kwThr);
+    const dear = live.filter(k => k.conv > 0 && k.cpa >= ref * 2.5 && k.risk <= STATS.flagLevel);
     const seasonalOut = [];
     [...zero.map(k => ({ ...k, why: 'Inga konverteringar' })), ...dear.map(k => ({ ...k, why: `${fmtKr(k.cpa)}/konv.` }))].forEach(k => {
       if (SEASONAL.test(k.keyword)) seasonalOut.push(k); else pauseList.push(k);
     });
     waste.seasonal = seasonalOut;
-    const mk = k => ({ name: k.keyword + (k.campaign ? ' · ' + k.campaign : ''), value: k.conv ? `${fmtKr(k.cost * mf)}/mån, ${fmtKr(k.cpa)}/konv.` : `${fmtKr(k.cost * mf)}/mån, inga konv.` });
+    const mk = k => ({ name: k.keyword + (k.campaign ? ' · ' + k.campaign : ''), value: (k.conv ? `${fmtKr(k.cost * mf)}/mån, ${fmtKr(k.cpa)}/konv.` : `${fmtKr(k.cost * mf)}/mån, inga konv.`) + sure(k.risk), risk: k.risk });
     const pz = pauseList.filter(k => !k.conv), pd = pauseList.filter(k => k.conv);
-    if (pz.length) add({ module: 'waste', sev: sum(pz, 'cost') / (acct.cost || 1) > 0.05 ? 'crit' : 'warn', key: 'kwZero', title: `${pz.length} sökord har kostat minst ${fmtKr(Math.max(ref * 2, M(50)))} var utan att ge en enda konvertering`, freeText: `Tillsammans cirka ${fmtKr(sum(pz, 'cost') * mf)} per månad.`, detail: 'Sökord att pausa eller begränsa till exakt matchning.', impact: { kind: 'waste', sek: sum(pz, 'cost') * mf }, items: pz.sort((a, b) => b.cost - a.cost).map(mk) });
-    if (pd.length) { const ex = pd.reduce((s, k) => s + Math.max(0, k.cost - k.conv * ref), 0) * mf; add({ module: 'waste', sev: 'warn', key: 'kwDear', title: `${pd.length} sökord konverterar till mer än 2,5 gånger kontots kostnad per konvertering`, freeText: `De kostar cirka ${fmtKr(sum(pd, 'cost') * mf)} per månad, varav ${fmtKr(ex)} är över kontots snittnivå.`, detail: 'Sökord att sänka budet på eller pausa.', impact: { kind: 'potential', sek: ex }, items: pd.sort((a, b) => b.cost - a.cost).map(mk) }); }
+    if (pz.length) add({ module: 'waste', sev: sum(pz, 'cost') / (acct.cost || 1) > 0.05 ? 'crit' : 'warn', key: 'kwZero', title: `${pz.length} sökord har kostat minst ${fmtKr(kwThr)} var utan att ge en enda konvertering`, freeText: `Tillsammans cirka ${fmtKr(sum(pz, 'cost') * mf)} per månad.`, detail: 'Sökord att pausa eller begränsa till exakt matchning.', impact: { kind: 'waste', sek: sum(pz, 'cost') * mf }, items: pz.sort((a, b) => b.cost - a.cost).map(mk) });
+    // Merkostnaden räknas efter krympning mot snittet, så att ett sökord med en enda konvertering inte överdriver besparingen
+    if (pd.length) { const ex = pd.reduce((s, k) => s + shrunkExcess(k.cost, k.conv, ref, STATS.priorConversions), 0) * mf; add({ module: 'waste', sev: 'warn', key: 'kwDear', title: `${pd.length} sökord konverterar till mer än 2,5 gånger kontots kostnad per konvertering`, freeText: `De kostar cirka ${fmtKr(sum(pd, 'cost') * mf)} per månad, varav ${fmtKr(ex)} är över kontots snittnivå.`, detail: 'Sökord att sänka budet på eller pausa.', impact: { kind: 'potential', sek: ex }, items: pd.sort((a, b) => b.cost - a.cost).map(mk) }); }
     if (seasonalOut.length) add({ module: 'waste', sev: 'info', key: 'seasonal', title: `${seasonalOut.length} säsongssökord ser dyra ut men bör inte pausas före säsongen`, freeText: 'Sökord som "jul" eller "black friday" konverterar sällan utanför sin säsong.', detail: 'Bedöm dem på data från förra säsongen i stället.', items: seasonalOut.map(mk) });
   }
 
@@ -626,14 +657,19 @@ function analyze(reports, opts) {
     const pCPA = pt.cpa || acctCPA || 100;
     const pROAS = pt.roas;
     prodMod.cost = pt.cost; prodMod.roas = pROAS; prodMod.cpa = pt.cpa; prodMod.count = pAgg.length;
-    const zero = pAgg.filter(p => p.conv === 0 && p.cost >= Math.max(pCPA * 2, M(30)) && p.clicks >= 15);
-    const weak = pAgg.filter(p => p.conv > 0 && p.cost >= pCPA * 3 && (pEcom && pROAS ? p.roas < pROAS * 0.5 : p.cpa >= pCPA * 2.5));
+    // Samma test som för sökord: utan försäljning flaggas produkten när risken att det är otur är högst STATS.flagLevel,
+    // med försäljning när den är klart sämre än snittet och skillnaden inte kan förklaras med slump.
+    const pRef = p => refCpaFor(p, pCPA, pEcom ? pROAS : null);
+    pAgg.forEach(p => { p.risk = badLuckChance(p.cost, p.conv, pRef(p)); });
+    const pThr = Math.max(minCostWithoutConversion(pCPA, STATS.flagLevel), M(30));
+    const zero = pAgg.filter(p => p.conv === 0 && p.cost >= pThr && p.clicks >= 15);
+    const weak = pAgg.filter(p => p.conv > 0 && (pEcom && pROAS ? p.roas < pROAS * 0.5 : p.cpa >= pCPA * 2.5) && p.risk <= STATS.flagLevel);
     const nm = p => (p.title ? p.title + ' (' + p.itemId + ')' : p.itemId);
     zero.forEach(p => { if (SEASONAL.test(p.title)) return; productList.push({ ...p, why: 'Inga konverteringar' }); });
     weak.forEach(p => { if (SEASONAL.test(p.title)) return; productList.push({ ...p, why: pEcom ? `ROAS ${nf2.format(p.roas)}` : `${fmtKr(p.cpa)}/konv.` }); });
     const zz = productList.filter(p => !p.conv), ww = productList.filter(p => p.conv);
-    if (zz.length) add({ module: 'waste', sev: sum(zz, 'cost') / (pt.cost || 1) > 0.05 ? 'crit' : 'warn', key: 'prodZero', title: `${zz.length} produkter har kostat minst ${fmtKr(Math.max(pCPA * 2, M(30)))} var utan försäljning`, freeText: `Tillsammans cirka ${fmtKr(sum(zz, 'cost') * mf)} per månad i Shopping och Performance Max.`, detail: 'Produkter att utesluta eller flytta till en lågbudgetkampanj.', impact: { kind: 'waste', sek: sum(zz, 'cost') * mf }, items: zz.sort((a, b) => b.cost - a.cost).map(p => ({ name: nm(p), value: `${fmtKr(p.cost * mf)}/mån, ${p.clicks} klick` })) });
-    if (ww.length) { const ex = ww.reduce((s, p) => s + Math.max(0, pEcom && pROAS ? p.cost - p.value / pROAS : p.cost - p.conv * pCPA), 0) * mf; add({ module: 'waste', sev: ex > pt.cost * mf * 0.1 ? 'crit' : 'warn', key: 'prodWeak', title: pEcom ? `${ww.length} produkter har ROAS under hälften av snittet` : `${ww.length} produkter har mer än 2,5 gånger snittets kostnad per konvertering`, freeText: pEcom ? `Snittet för produkterna är ROAS ${nf2.format(pROAS)}. De här produkterna kostar cirka ${fmtKr(sum(ww, 'cost') * mf)} per månad.` : `De kostar cirka ${fmtKr(sum(ww, 'cost') * mf)} per månad.`, detail: 'Produkter att sänka mål-ROAS för, flytta till en egen kampanj eller utesluta.', impact: { kind: 'potential', sek: ex }, items: ww.sort((a, b) => b.cost - a.cost).map(p => ({ name: nm(p), value: pEcom ? `${fmtKr(p.cost * mf)}/mån, ROAS ${nf2.format(p.roas)}` : `${fmtKr(p.cost * mf)}/mån, ${fmtKr(p.cpa)}/konv.` })) }); }
+    if (zz.length) add({ module: 'waste', sev: sum(zz, 'cost') / (pt.cost || 1) > 0.05 ? 'crit' : 'warn', key: 'prodZero', title: `${zz.length} produkter har kostat minst ${fmtKr(pThr)} var utan försäljning`, freeText: `Tillsammans cirka ${fmtKr(sum(zz, 'cost') * mf)} per månad i Shopping och Performance Max.`, detail: 'Produkter att utesluta eller flytta till en lågbudgetkampanj.', impact: { kind: 'waste', sek: sum(zz, 'cost') * mf }, items: zz.sort((a, b) => b.cost - a.cost).map(p => ({ name: nm(p), value: `${fmtKr(p.cost * mf)}/mån, ${p.clicks} klick${sure(p.risk)}`, risk: p.risk })) });
+    if (ww.length) { const ex = ww.reduce((s, p) => s + shrunkExcess(p.cost, p.conv, pRef(p), STATS.priorConversions), 0) * mf; add({ module: 'waste', sev: ex > pt.cost * mf * 0.1 ? 'crit' : 'warn', key: 'prodWeak', title: pEcom ? `${ww.length} produkter har ROAS under hälften av snittet` : `${ww.length} produkter har mer än 2,5 gånger snittets kostnad per konvertering`, freeText: pEcom ? `Snittet för produkterna är ROAS ${nf2.format(pROAS)}. De här produkterna kostar cirka ${fmtKr(sum(ww, 'cost') * mf)} per månad.` : `De kostar cirka ${fmtKr(sum(ww, 'cost') * mf)} per månad.`, detail: 'Produkter att sänka mål-ROAS för, flytta till en egen kampanj eller utesluta.', impact: { kind: 'potential', sek: ex }, items: ww.sort((a, b) => b.cost - a.cost).map(p => ({ name: nm(p), value: (pEcom ? `${fmtKr(p.cost * mf)}/mån, ROAS ${nf2.format(p.roas)}` : `${fmtKr(p.cost * mf)}/mån, ${fmtKr(p.cpa)}/konv.`) + sure(p.risk), risk: p.risk })) }); }
     if (!waste.available) { waste.available = true; waste.source = 'produkter'; }
     const pw = sum(zz, 'cost');
     waste.productPct = pw / (pt.cost || 1);
@@ -642,16 +678,19 @@ function analyze(reports, opts) {
       const be = 1 / margin;
       const lossOf = p => Math.max(0, p.cost - (p.value || 0) * margin);
       const listed = new Set(productList.map(p => p.itemId));
-      const unp = pAgg.filter(p => !listed.has(p.itemId) && p.cost >= Math.max(pCPA * 2, M(30)) && (p.roas || 0) < be * 0.9 && !SEASONAL.test(p.title || p.itemId)).sort((a, b) => lossOf(b) - lossOf(a));
+      // Risken räknas mot break-even: kan produkten egentligen gå jämnt ut och bara ha haft otur?
+      pAgg.forEach(p => { p.beRisk = badLuckChance(p.cost, p.conv, refCpaFor(p, pCPA, be)); });
+      const unp = pAgg.filter(p => !listed.has(p.itemId) && p.cost >= Math.max(pCPA * 2, M(30)) && (p.roas || 0) < be * 0.9 && !SEASONAL.test(p.title || p.itemId)
+        && p.beRisk <= STATS.flagLevel).sort((a, b) => lossOf(b) - lossOf(a));
       if (unp.length) {
         const loss = unp.reduce((s2, p) => s2 + lossOf(p), 0) * mf;
-        unp.forEach(p => productList.push({ ...p, why: `ROAS ${nf2.format(p.roas || 0)} under break-even ${nf2.format(be)}` }));
+        unp.forEach(p => productList.push({ ...p, risk: p.beRisk, why: `ROAS ${nf2.format(p.roas || 0)} under break-even ${nf2.format(be)}` }));
         add({ module: 'waste', sev: loss > pt.cost * mf * 0.1 ? 'crit' : 'warn', key: 'unprofitProd',
           title: `${unp.length} produkter säljer, men under break-even-ROAS ${nf2.format(be)}`,
           freeText: `Annonskostnaden som bruttovinsten inte täcker är cirka ${fmtKr(loss)} per månad.`,
           detail: 'Produkter som ger försäljning men inte vinst. Lägg dem i en egen kampanj med högre mål-ROAS, eller uteslut de sämsta.',
           impact: { kind: 'potential', sek: loss },
-          items: unp.map(p => ({ name: nm(p), value: `${fmtKr(p.cost * mf)}/mån, ROAS ${nf2.format(p.roas || 0)}, förlust ${fmtKr(lossOf(p) * mf)}/mån` })) });
+          items: unp.map(p => ({ name: nm(p), value: `${fmtKr(p.cost * mf)}/mån, ROAS ${nf2.format(p.roas || 0)}, förlust ${fmtKr(lossOf(p) * mf)}/mån${sure(p.beRisk)}`, risk: p.beRisk })) });
       }
     }
     // Optimerade produkttitlar utifrån söktermer som klickas och konverterar
@@ -821,10 +860,10 @@ function analyze(reports, opts) {
     spendMonthly: acct.cost * mf, account: acct,
     period: { from, to, days: periodDays, assumed, gran }, currency, industry: benchLabel,
     campaigns: campAgg.map(c => ({ name: c.name, cost: c.cost * mf, conv: c.conv * mf })),
-    negatives: waste.negatives || [],
-    pauseKeywords: pauseList.map(k => ({ campaign: k.campaign, adGroup: k.adGroup, keyword: k.keyword, matchType: k.matchType, costMonthly: k.cost * mf, conv: k.conv, cpa: k.cpa, why: k.why })),
+    negatives: (waste.negatives || []).map(n => ({ ...n, confidence: confOf(n.risk) })),
+    pauseKeywords: pauseList.map(k => ({ campaign: k.campaign, adGroup: k.adGroup, keyword: k.keyword, matchType: k.matchType, costMonthly: k.cost * mf, conv: k.conv, cpa: k.cpa, why: k.why, risk: k.risk, confidence: confOf(k.risk) })),
     titleSuggestions,
-    productExclusions: productList.map(p => ({ itemId: p.itemId, title: p.title, campaign: p.campaign, costMonthly: p.cost * mf, clicks: p.clicks, conv: p.conv, roas: p.roas, cpa: p.cpa, why: p.why })),
+    productExclusions: productList.map(p => ({ itemId: p.itemId, title: p.title, campaign: p.campaign, costMonthly: p.cost * mf, clicks: p.clicks, conv: p.conv, roas: p.roas, cpa: p.cpa, why: p.why, risk: p.risk, confidence: confOf(p.risk) })),
     savings, narrative
   };
 }
@@ -1165,7 +1204,8 @@ function addTips(findings, ctx) {
     ],
     expensive: f => [
       `Ladda upp listan med negativa sökord (CSV) i Google Ads Editor. Den innehåller ${ctx.negatives.length} sökord.`,
-      'Granska listan först. Ta bort sökord som faktiskt är relevanta men har haft otur under perioden.',
+      `Börja med raderna märkta med hög säkerhet (minst ${Math.round((1 - STATS.sureLevel) * 100)} % säkert). Där är det mycket osannolikt att bristen på konverteringar bara är otur.`,
+      'Granska raderna med medel säkerhet innan du lägger in dem. Behåll söktermer som faktiskt är relevanta: de kan ha haft otur under perioden.',
       'Byt bred matchning till frasmatchning för sökorden som drar in de här söktermerna.',
       'Gå igenom söktermsrapporten varje vecka de första två månaderna, sedan varje månad.'
     ],

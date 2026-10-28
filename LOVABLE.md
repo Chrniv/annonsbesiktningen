@@ -8,13 +8,14 @@ Lovable kan inte koppla sig till ett befintligt GitHub-repo. I stället importer
 2. I Lovable: **New project › Import** och ladda upp ZIP-filen.
 3. Ge Lovable den här instruktionen (klistra in):
 
-> Detta är en Vite-app i vanilla JavaScript. Behåll `src/engine.js` och `src/config.js` oförändrade: de innehåller all analyslogik och är testade (`tests/engine.test.js`). Bygg om gränssnittet i `index.html` och `src/ui.js` som React-komponenter med samma texter och samma flöde: startfrågor → uppladdning → resultat → e-post och samtycke → sammanfattning → köp → leverans med nedladdningar. Behåll `src/backend.js` som enda ställe som pratar med databasen. Behåll Edge Functions `submit-lead` och `verify-payment` och databasschemat i `supabase/migrations/001_init.sql`, inklusive radnivåskyddet (bara admins får läsa leads).
+> Detta är en Vite-app i vanilla JavaScript. Behåll `src/engine.js`, `src/stats.js` och `src/config.js` oförändrade: de innehåller all analyslogik och är testade (`tests/engine.test.js`, `tests/stats.test.js`). Bygg om gränssnittet i `index.html` och `src/ui.js` som React-komponenter med samma texter och samma flöde: startfrågor → uppladdning → resultat → e-post och samtycke → sammanfattning → köp → leverans med nedladdningar. Behåll `src/backend.js` som enda ställe som pratar med databasen. Behåll Edge Functions `submit-lead` och `verify-payment` och databasschemat i `supabase/migrations/001_init.sql`, inklusive radnivåskyddet (bara admins får läsa leads).
 
 ## Det som är viktigt att bevara
 
 | Del | Varför |
 | --- | --- |
 | `src/engine.js` | All analys, branschsnitt, besparingsmodell, negativa sökord och titelmotor. Ren logik, inga beroenden. |
+| `src/stats.js` | Statistiken bakom säkerheten och krympningen. Ren matematik, inga beroenden. |
 | Radnivåskyddet i databasen | Besökare får aldrig läsa leads. Bara e-post i tabellen `admins`. |
 | `verify-payment` | Hela rapporten låses bara upp när Stripe bekräftat betalningen. |
 | Samtyckestexten och integritetspolicyn | Krävs för att spara leads enligt GDPR. |

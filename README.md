@@ -15,6 +15,7 @@ Gratis granskning av Google Ads-konton som leadmagnet. Besökaren laddar upp exp
 ```
 index.html, integritetspolicy.html   sidorna
 src/engine.js      analysmotorn (ren logik, ingen DOM) – läser exporter och räknar fram fynd
+src/stats.js       statistiken: risk att det är otur, säkerhet och krympning mot snittet
 src/ui.js          gränssnittet
 src/backend.js     allt som pratar med Supabase
 src/config.js      inställningar (byrånamn, pris, Supabase-adress, betallänk)
@@ -79,3 +80,12 @@ npm run functions  # buntar Edge Functions för dashboarden
 ```
 
 Inställningar som påverkar analysen (växelkurser, egna varumärken, branschsnitt) finns i `src/config.js` och överst i `src/engine.js`.
+
+## Statistiken
+
+Motorn dömer inte söktermer, sökord eller produkter på små tal. Två principer (`src/stats.js`, inställningar under `stats` i `src/config.js`):
+
+- **Risk att det är otur.** Något som kostat 3 gånger kontots kostnad per konvertering borde ha gett cirka 3 konverteringar om det presterade som snittet. Chansen att ändå få 0 är e^−3 ≈ 5 %. Vi flaggar först när den risken är högst 15 % (*medel* säkerhet) och märker raden *hög* säkerhet under 5 %. Återkommande ord kräver 10 %, eftersom hundratals ord testas samtidigt. Ord som kontot har egna sökord för kräver 5 %. Sökord, produkter och kampanjer som har konverteringar men är klart dyrare än snittet flaggas bara om skillnaden inte kan förklaras med slump.
+- **Krympning mot snittet.** Varje objekt antas ha en konvertering till snittpris i bagaget. Med lite data dominerar snittet, med mycket data objektets egna siffror. Det används för merkostnader (besparingarna överdrivs inte av en enda dyr konvertering), för att rangordna kampanjlistor och för att föreslå nya sökord: en sökterm föreslås bara om den med minst 80 % sannolikhet är bättre än kontot.
+
+Säkerheten syns i leveransen, i rapporterna och i Excel-filen. CSV-filerna till Google Ads Editor är oförändrade.

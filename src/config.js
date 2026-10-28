@@ -27,6 +27,16 @@ export const CONFIG = {
   usdToSek: 9.7,                   // växelkurs för branschsnitt i USD (okt 2026)
   fxToSek: { SEK: 1, USD: 9.7, EUR: 11.0, NOK: 1.0, DKK: 1.48, GBP: 13.0 }, // ungefärliga kurser, okt 2026
   ownBrands: [],                   // egna varumärken som får användas i titlar och annonser, t.ex. ['smartphoto']
+
+  // Statistik (se src/stats.js). "Risk" = sannolikheten att något som egentligen presterar som kontots snitt
+  // ändå ser så här dåligt ut av ren slump. Lägre värden = färre men säkrare fynd.
+  stats: {
+    flagLevel: 0.15,        // flagga sökord, söktermer och produkter när risken att det är otur är högst 15 % ("medel" säkerhet)
+    ngramLevel: 0.10,       // strängare för återkommande ord: vi testar hundratals ord, så några ser dåliga ut av slump
+    sureLevel: 0.05,        // högst 5 % risk = "hög" säkerhet; krävs också för ord som kontot har egna sökord för
+    priorConversions: 1,    // krympning: varje objekt antas ha en konvertering till snittpris i bagaget
+    winnerProbability: 0.8  // söktermer föreslås som nya sökord först när de med minst 80 % sannolikhet är bättre än snittet
+  },
   leadRetentionMonths: 12,         // hur länge leads sparas; samma siffra står i samtyckestexten och policyn
   benchmarkSource: 'WordStream/LocaliQ Google Ads Benchmarks 2026 (13 474 amerikanska sökkampanjer, apr 2025–mar 2026, medianvärden)'
 };
