@@ -131,4 +131,23 @@ export function probBetter(cost, conv, refCpa, k) {
   return clamp01(gammaQ(k + Math.max(0, conv || 0), k + Math.max(0, cost || 0) / refCpa));
 }
 
+/* ---------- 3. Osäkerhetsintervall genom simulering ---------- */
+/** Liten, snabb slumptalsgenerator med frö, så att samma data alltid ger samma intervall. */
+export function seededRandom(seed) {
+  let a = (seed >>> 0) || 0x9e3779b9;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+/** Kvantil ur en sorterad lista (linjär interpolation). */
+export function quantile(sorted, q) {
+  if (!sorted.length) return 0;
+  const i = (sorted.length - 1) * q, lo = Math.floor(i), hi = Math.ceil(i);
+  return sorted[lo] + (sorted[hi] - sorted[lo]) * (i - lo);
+}
+
 function clamp01(v) { return Math.max(0, Math.min(1, v)); }

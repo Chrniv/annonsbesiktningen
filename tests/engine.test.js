@@ -104,3 +104,27 @@ test('marginal ger break-even-ROAS och förlustkampanjer', () => {
   assert.ok(f && f.items.length === 1 && /Dålig/.test(f.items[0].name));
   assert.ok(r.savings.high > 0);
 });
+
+test('besparing som osäkerhetsintervall: deterministiskt, inom rimliga gränser och med rubrik', () => {
+  const reps = E.sampleFilesEcom('2026-10-14').map(x => E.readReport(x.name, x.text));
+  const a = E.analyze(reps, { industry: 'shopping' }), b = E.analyze(reps, { industry: 'shopping' });
+  const ci = a.savings.ci;
+  assert.equal(ci.level, 0.9);
+  assert.deepEqual(ci, b.savings.ci, 'samma data ger samma intervall');
+  assert.ok(ci.low > 0 && ci.low <= ci.median && ci.median <= ci.high);
+  assert.ok(ci.high <= a.savings.planHigh + 1e-6, 'aldrig över summan av alla fynds högsta besparing');
+  assert.equal(a.savings.low, ci.low);
+  const h = E.savingsHeadline(a.savings, false);
+  assert.match(h.lead, /^Vi är 90 % säkra på att du kan spara .+ i månaden\.$/);
+});
+
+test('osäkra fynd ger bredare intervall än säkra', () => {
+  const mk = risk => [{ key: 'expensive', impact: { sek: 1000 }, saving: { low: 700, high: 1000 }, items: Array.from({ length: 10 }, () => ({ amt: 100, risk })) }];
+  const sure = E.simulateSavings(mk(0.01), 1), unsure = E.simulateSavings(mk(0.4), 1);
+  assert.ok(unsure.low < sure.low);
+  assert.ok(sure.low > 650);
+  const none = E.simulateSavings([], 1);
+  assert.equal(none.high, 0);
+  assert.equal(E.savingsHeadline({ ci: none }), null);
+  assert.match(E.savingsHeadline({ ci: { level: 0.9, low: 0, high: 500, median: 100 } }).lead, /datan räcker inte/);
+});

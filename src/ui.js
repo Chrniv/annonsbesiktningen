@@ -1,5 +1,5 @@
 /* ===== Gränssnitt ===== */
-import { readReport, analyze, sampleFiles, sampleFilesEcom, num, decodeBuffer, BENCH, CONFIG, fmtKr, fmtPct, fmtRange, fmtDelta, nf0, nf2, setCurrency, matchToEditor, negativesCsv, negativesPasteList, pauseKeywordsCsv, productsCsv, titlesCsv } from './engine.js';
+import { savingsHeadline, readReport, analyze, sampleFiles, sampleFilesEcom, num, decodeBuffer, BENCH, CONFIG, fmtKr, fmtPct, fmtRange, fmtDelta, nf0, nf2, setCurrency, matchToEditor, negativesCsv, negativesPasteList, pauseKeywordsCsv, productsCsv, titlesCsv } from './engine.js';
 import { backend } from './backend.js';
 
 export function startApp() {
@@ -285,9 +285,12 @@ export function startApp() {
 
     const pace = r.modules.pacing;
     const S = r.savings || { low: 0, high: 0 };
+    const head = savingsHeadline(S, dq.level !== 'ok');
+    $('ci-head').hidden = !head;
+    if (head) { $('ci-lead').textContent = head.lead; $('ci-sub').textContent = head.sub; }
     $('figures').innerHTML = `
       <div><span class="label">Uppskattat slöseri</span><span class="big">${r.modules.waste.available ? fmtKr(r.wasteMonthly) : '–'}</span><span class="small muted">${r.modules.waste.available ? `per månad, ${Math.round(r.modules.waste.pct * 100)} % av kostnaden` : 'Ladda upp söktermer för att räkna ut'}</span></div>
-      <div><span class="label">Möjlig besparing</span><span class="big">${S.high ? fmtRange(S.low, S.high) : '–'}</span><span class="small muted">${S.high ? `per månad om åtgärderna genomförs${S.convHigh ? `, eller ≈ ${Math.round(S.convLow)}–${Math.round(S.convHigh)} fler konverteringar` : ''}` : 'Inga tydliga besparingar hittades'}</span></div>
+      <div><span class="label">Möjlig besparing</span><span class="big">${S.high ? fmtRange(S.low, S.high) : '–'}</span><span class="small muted">${S.high ? `per månad, ${S.ci ? Math.round(S.ci.level * 100) + ' % säkert intervall' : 'om åtgärderna genomförs'}${S.convHigh ? `, eller ≈ ${Math.round(S.convLow)}–${Math.round(S.convHigh)} fler konverteringar` : ''}` : 'Inga tydliga besparingar hittades'}</span></div>
       <div><span class="label">Missade konverteringar</span><span class="big num">${r.missedConvMonthly ? '≈ ' + Math.round(r.missedConvMonthly) : '–'}</span><span class="small muted">${r.missedConvMonthly ? 'per månad när lönsamma kampanjer når budgettaket' : pace.available ? 'Inga lönsamma kampanjer stoppas av budget' : 'Kräver budgetkolumn'}</span></div>
       <div><span class="label">Fynd</span><div class="counts">${r.counts.crit ? `<span class="chip crit">${r.counts.crit} ${r.counts.crit === 1 ? 'allvarligt' : 'allvarliga'}</span>` : ''}${r.counts.warn ? `<span class="chip warn">${r.counts.warn} ${r.counts.warn === 1 ? 'anmärkning' : 'anmärkningar'}</span>` : ''}${r.counts.info ? `<span class="chip info">${r.counts.info} ${r.counts.info === 1 ? 'notering' : 'noteringar'}</span>` : ''}${!r.findings.length ? '<span class="chip good">Inga fel hittade</span>' : ''}</div></div>`;
 
@@ -367,7 +370,7 @@ export function startApp() {
       profile: { type: state.profile.type, margin: state.profile.margin || undefined, industry: state.profile.industry, industryText: state.profile.industryOther ? state.profile.industryText : undefined, campaigns: state.profile.campaigns, goal: state.profile.goal, budget: state.profile.budget },
       audit: {
         score: r.overall, verdict: r.verdict && r.verdict.label, period: r.period, dataQuality: r.dataQuality ? r.dataQuality.level : undefined,
-        spendMonthly: Math.round(r.spendMonthly), wasteMonthly: Math.round(r.wasteMonthly), potentialMonthly: Math.round(r.potentialMonthly), missedConvMonthly: Math.round(r.missedConvMonthly || 0),
+        spendMonthly: Math.round(r.spendMonthly), wasteMonthly: Math.round(r.wasteMonthly), savingsLow: Math.round((r.savings || {}).low || 0), savingsHigh: Math.round((r.savings || {}).high || 0), potentialMonthly: Math.round(r.potentialMonthly), missedConvMonthly: Math.round(r.missedConvMonthly || 0),
         modules: Object.fromEntries(Object.values(r.modules).map(m => [m.id, m.available ? m.score : null])),
         findings: r.findings.map(f => ({ sev: f.sev, module: f.module, title: f.title, impactSek: f.impact ? Math.round(f.impact.sek || 0) : null, count: f.items.length, campaigns: f.module === 'waste' ? undefined : f.items.map(i => i.name).filter(n => r.campaigns.some(c => c.name === n)) })),
         campaigns: r.campaigns.map(c => ({ name: c.name, costMonthly: Math.round(c.cost), convMonthly: Math.round(c.conv * 10) / 10 }))
@@ -567,7 +570,7 @@ export function startApp() {
       ['Annonsbesiktningen', ''], ['Skapad', stamp()], ['Period', r.period.from ? `${r.period.from} – ${r.period.to}` : 'okänd'], ['Bransch', r.industry], ['Valuta', r.currency],
       ['Betyg', r.overall], ['Bedömning', r.verdict ? r.verdict.label : ''],
       ['Kostnad per månad', rnd(r.spendMonthly)], ['Uppskattat slöseri per månad', rnd(r.wasteMonthly)],
-      ['Möjlig besparing per månad, lägst', rnd(S.low)], ['Möjlig besparing per månad, högst', rnd(S.high)],
+      ['Möjlig besparing per månad, lägst (90 % säkert)', rnd(S.low)], ['Möjlig besparing per månad, högst (90 % säkert)', rnd(S.high)], ['Möjlig besparing per månad, mest troligt', rnd(S.ci ? S.ci.median : (S.low + S.high) / 2)],
       ['Fler konverteringar om besparingen flyttas', S.convHigh ? `${Math.round(S.convLow)}–${Math.round(S.convHigh)}` : ''],
       ['Missade konverteringar per månad (budget)', rnd(r.missedConvMonthly)], ['', ''], ['Analys', '']
     ].concat((r.narrative || []).map(p => [p.h, p.t]));
@@ -657,9 +660,10 @@ export function startApp() {
     const dqPdf = r.dataQuality && r.dataQuality.level !== 'ok' ? r.dataQuality : null;
     const vy = y; y = vy + 2; text(r.verdict ? r.verdict.label + (dqPdf ? ' · preliminärt' : '') : '', 12, { bold: true, color: vcol, x: L + 50, width: CW - 50 }); text(r.verdict ? r.verdict.text : '', 10, { color: C.muted, x: L + 50, width: CW - 50 });
     y = Math.max(y, vy + 16);
+    { const hd = savingsHeadline(S, !!dqPdf); if (hd) { y += 2; text(hd.lead, 11.5, { bold: true, color: C.good }); text(hd.sub, 9, { color: C.muted }); y += 2; } }
     if (dqPdf) { y += 2; text(dqPdf.title, 10.5, { bold: true, color: dqPdf.level === 'verylow' ? C.crit : C.warn }); text(`${dqPdf.text} ${dqPdf.advice}`, 9.5, { color: C.muted }); y += 3; }
     // Nyckeltal
-    const figs = [['Uppskattat slöseri', M.waste.available ? fmtKr(r.wasteMonthly) : '–', 'per månad'], ['Möjlig besparing', S.high ? fmtRange(S.low, S.high) : '–', 'per månad'], ['Missade konverteringar', r.missedConvMonthly ? 'ca ' + Math.round(r.missedConvMonthly) : '–', 'per månad'], ['Fynd', String(r.findings.length), `${r.counts.crit} allvarliga, ${r.counts.warn} anmärkningar`]];
+    const figs = [['Uppskattat slöseri', M.waste.available ? fmtKr(r.wasteMonthly) : '–', 'per månad'], ['Möjlig besparing', S.high ? fmtRange(S.low, S.high) : '–', S.ci ? 'per månad, 90 % säkert' : 'per månad'], ['Missade konverteringar', r.missedConvMonthly ? 'ca ' + Math.round(r.missedConvMonthly) : '–', 'per månad'], ['Fynd', String(r.findings.length), `${r.counts.crit} allvarliga, ${r.counts.warn} anmärkningar`]];
     const bw = (CW - 9) / 4; need(26);
     figs.forEach((f, i) => { const x = L + i * (bw + 3); doc.setFillColor(...C.soft); doc.roundedRect(x, y, bw, 22, 2.5, 2.5, 'F');
       doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); color(C.muted); doc.text(T(f[0]), x + 3.5, y + 5.5);
@@ -753,7 +757,7 @@ table{width:100%;border-collapse:collapse;margin:10px 0;font-size:14px}td,th{bor
 <div class="meta"><span>Period: ${e(r.period.from ? r.period.from + ' – ' + r.period.to : 'okänd')}</span><span>Bransch: ${e(r.industry)}</span><span>Kostnad per månad: ${fmtKr(r.spendMonthly)}</span><span>Skapad: ${stamp()}</span></div>
 <button class="print" onclick="window.print()">Skriv ut eller spara som PDF</button>
 <p class="score">${r.overall == null ? '–' : r.overall}<span style="font-size:20px;color:#687270;letter-spacing:0">/100</span></p>
-<p class="verdict">${e(r.verdict ? r.verdict.label : '')}${dqOk ? '' : ' · preliminärt'}</p><p>${e(r.verdict ? r.verdict.text : '')}</p>
+<p class="verdict">${e(r.verdict ? r.verdict.label : '')}${dqOk ? '' : ' · preliminärt'}</p><p>${e(r.verdict ? r.verdict.text : '')}</p>${(() => { const hd = savingsHeadline(r.savings, !dqOk); return hd ? `<p style="font-size:18px;font-weight:600;margin:18px 0 2px">${e(hd.lead)}</p><p class="muted">${e(hd.sub)}</p>` : ''; })()}
 ${dqOk ? '' : `<div style="margin:18px 0;padding:14px 16px;border-left:3px solid ${r.dataQuality.level === 'verylow' ? '#B4442E' : '#B07A12'};background:#F7F3EA;border-radius:8px"><b>${e(r.dataQuality.title)}</b><p style="margin:6px 0 0">${e(r.dataQuality.text)} ${e(r.dataQuality.advice)}</p></div>`}
 <div class="figs"><div>Uppskattat slöseri<b>${M.waste.available ? fmtKr(r.wasteMonthly) : '–'}</b>per månad</div><div>Möjlig besparing<b>${(r.savings || {}).high ? fmtRange(r.savings.low, r.savings.high) : '–'}</b>per månad</div><div>Missade konverteringar<b>${r.missedConvMonthly ? '≈ ' + Math.round(r.missedConvMonthly) : '–'}</b>per månad</div><div>Fynd<b>${r.findings.length}</b>${r.counts.crit} allvarliga, ${r.counts.warn} anmärkningar</div></div>
 ${(r.narrative || []).length ? `<h2>Analys</h2>${r.narrative.map(p => `<h3>${e(p.h)}</h3><p>${e(p.t)}</p>`).join('')}` : ''}

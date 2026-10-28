@@ -274,3 +274,8 @@ footer.foot a { color: inherit }
 .col-pop .note { margin-top: 10px; padding-left: 10px; border-left: 2px solid var(--warn) }
 @media (max-width: 560px) { .col-pop { grid-column: 1 / -1 } .checklist .cd { grid-column: 2 / -1 } }
 .col-pop li { display: list-item; padding: 0; border: 0 }
+
+/* Rubriken med osäkerhetsintervall i gratisversionen */
+.ci-head { margin-top: 22px; padding: 16px 18px; border-radius: 12px; background: color-mix(in srgb, var(--sign) 9%, transparent); border-left: 3px solid var(--sign) }
+.ci-lead { margin: 0 0 4px; font-size: 19px; font-weight: 600; letter-spacing: -.01em; line-height: 1.35 }
+.ci-head .small { margin: 0 }
