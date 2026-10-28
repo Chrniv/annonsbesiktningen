@@ -124,3 +124,53 @@ test('för lite data: tydlig notering med föreslagen period', () => {
   assert.equal(t.daysNeeded, null);
   assert.match(t.advice, /helt år/);
 });
+
+/* ---------- Vecka mot vecka: normalt intervall ---------- */
+// 6 veckor med dagsdata (1–42 sep/okt 2026). Veckornas konverteringar läggs på blockets första dag.
+const weeksCsv = convPerWeek => {
+  const rows = [];
+  for (let d = 0; d < convPerWeek.length * 7; d++) {
+    const date = new Date(Date.UTC(2026, 8, 1 + d)).toISOString().slice(0, 10);
+    rows.push(`Shop,${date},100,1000,SEK,1000,${d % 7 === 0 ? convPerWeek[Math.floor(d / 7)] : 0}`);
+  }
+  return 'Campaign,Day,Clicks,Impr.,Currency code,Cost,Conversions\n' + rows.join('\n');
+};
+
+test('vanlig variation flaggas inte, fast den är 20 % sämre än veckan innan', () => {
+  const r = run(['c.csv', weeksCsv([21, 28, 17, 26, 23, 18])]);
+  const W = r.modules.wow;
+  assert.equal(W.mode, 'band');
+  assert.equal(W.weeks, 5);
+  const conv = W.changes.find(c => c.k === 'conv');
+  assert.ok(Math.abs(conv.ref - 23) < 1e-9, 'snittet för de fem veckorna');
+  assert.ok(conv.lo < 18 && conv.hi > 28);
+  assert.equal(conv.outside, null);
+  assert.ok(!r.findings.some(f => f.key === 'wow-conv'), 'inom det normala');
+});
+
+test('ett verkligt ras hamnar utanför intervallet och flaggas', () => {
+  const r = run(['c.csv', weeksCsv([21, 28, 17, 26, 23, 5])]);
+  const f = r.findings.find(x => x.key === 'wow-conv');
+  assert.ok(f, 'flaggas');
+  assert.equal(f.sev, 'crit');
+  assert.match(f.title, /normal vecka/);
+  assert.match(f.freeText, /mellan/);
+});
+
+test('med för få veckor jämförs med veckan innan och föreslår längre period', () => {
+  const r = run(['c.csv', weeksCsv([21, 28, 10])]);
+  const W = r.modules.wow;
+  assert.equal(W.mode, 'pair');
+  assert.equal(W.refLabel, 'Veckan innan');
+  assert.ok(W.notes.some(n => /35 dagar/.test(n)));
+  assert.ok(r.findings.some(f => f.key === 'wow-conv'), 'som tidigare: −64 % mot veckan innan');
+});
+
+test('svenska kalenderhändelser', () => {
+  assert.deepEqual(E.eventsIn('2026-06-15', '2026-06-21'), ['midsommar']);
+  assert.ok(E.eventsIn('2026-11-25', '2026-12-01').includes('Black Friday-helgen'));
+  assert.ok(E.eventsIn('2027-03-24', '2027-03-30').includes('påsken'));
+  // Lönedagen flyttas till fredagen när den 25:e är en lördag (okt 2025)
+  assert.deepEqual(E.eventsIn('2025-10-24', '2025-10-24'), ['lönedagen']);
+  assert.deepEqual(E.eventsIn('2025-10-25', '2025-10-25'), []);
+});

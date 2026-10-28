@@ -11,6 +11,8 @@ export function startApp() {
   const CONF = { 'hög': ['good', 'Hög'], 'medel': ['warn', 'Medel'], 'låg': ['info', 'Låg'] };
   const confPct = risk => (risk == null ? '' : `${Math.min(99, Math.floor((1 - risk) * 100))} % säkert`);
   const confText = (level, risk) => (level ? `${CONF[level][1]} (${confPct(risk)})` : '–');
+  const wowFmt = k => (['ctr', 'cvr'].includes(k) ? fmtPct : ['cost', 'cpa', 'cpc'].includes(k) ? fmtKr : k === 'roas' ? (v => v == null ? '–' : nf2.format(v)) : (v => v == null ? '–' : nf0.format(Math.round(v))));
+  const wowRef = (W, c) => (W.mode === 'band' && c.lo != null ? `${wowFmt(c.k)(c.ref)} (${wowFmt(c.k)(c.lo)} – ${wowFmt(c.k)(c.hi)})` : wowFmt(c.k)(c.ref));
   const confShort = level => (level ? CONF[level][1] : '–');
   const CONF_NOTE = `Säkerhet: Hög = högst ${Math.round(CONFIG.stats.sureLevel * 100)} % risk att bristen på konverteringar är ren otur, Medel = högst ${Math.round(CONFIG.stats.flagLevel * 100)} %. Streck = bedömt på innebörd.`;
   const confCell = (level, risk) => (level ? `<span class="chip ${CONF[level][0]}" title="${esc(confPct(risk))}">${CONF[level][1]}</span>` : '<span title="Bedömd på innebörd">–</span>');
@@ -294,7 +296,7 @@ export function startApp() {
       performance: () => { const b = M.performance.benchmark.metrics; return `CTR ${fmtPct(b.ctr.you)} · konv.grad ${fmtPct(b.cvr.you)} (${M.performance.scope})`; },
       waste: () => `${fmtKr(M.waste.monthly)}/mån går till ${M.waste.source} utan konverteringar.`,
       pacing: () => M.pacing.projected == null ? (M.pacing.cappedCount ? `${M.pacing.cappedCount} lönsamma kampanjer begränsas av budgeten.` : 'Inga lönsamma kampanjer begränsas av budgeten.') : `${{ over: 'Överskrider budget', under: 'Använder inte hela budgeten', ontrack: 'I fas med budget' }[M.pacing.verdict]}: prognos ${fmtKr(M.pacing.projected)} av ${fmtKr(M.pacing.monthBudget)}${M.pacing.month ? ' denna månad' : ' per månad'}.`,
-      wow: () => M.wow.headline ? `${M.wow.headline.sv} ${fmtDelta(M.wow.headline.delta)} senaste 7 dagarna mot veckan innan.` : 'Inga större förändringar.'
+      wow: () => M.wow.headline ? `${M.wow.headline.sv} ${fmtDelta(M.wow.headline.delta)} senaste 7 dagarna mot ${M.wow.mode === 'band' ? 'en normal vecka' : 'veckan innan'}${M.wow.mode === 'band' && !M.wow.headline.outside ? ', inom det normala' : ''}.` : 'Inga större förändringar.'
     };
     const lockWhy = {
       performance: 'Ladda upp en kampanjrapport.',
@@ -403,12 +405,16 @@ export function startApp() {
     $('pace-sum').innerHTML = P.available && P.projected != null ? `<div class="find"><div class="find-head"><span class="label">Budgettakt</span><span class="chip ${P.verdict === 'ontrack' ? 'good' : 'warn'}">${{ over: 'Överskrider', under: 'Underförbrukar', ontrack: 'I fas' }[P.verdict]}</span></div><p class="small">${P.month ? `Med nuvarande takt landar ${P.month} på ${fmtKr(P.projected)} mot en budget på ${fmtKr(P.monthBudget)} (${Math.round(P.ratio * 100)} %). ${P.daysLeft} dagar kvar.` : `Nuvarande takt motsvarar ${fmtKr(P.projected)} per månad mot en budget på ${fmtKr(P.monthBudget)}.`}</p></div>` : '';
     const W = r.modules.wow;
     if (W.available) {
+      const band = W.mode === 'band';
       const rows = W.changes.filter(c => c.cur != null).map(c => {
-        const good = c.good && c.delta != null && Math.abs(c.delta) >= 5 ? ((c.good === 'up') === (c.delta > 0) ? 'up' : 'down') : '';
-        const f = ['ctr', 'cvr'].includes(c.k) ? fmtPct : ['cost', 'cpa', 'cpc'].includes(c.k) ? fmtKr : c.k === 'roas' ? (v => v == null ? '–' : nf2.format(v)) : (v => v == null ? '–' : nf0.format(v));
-        return `<tr><td>${c.sv}</td><td class="n">${f(c.prev)}</td><td class="n">${f(c.cur)}</td><td class="n ${good}">${fmtDelta(c.delta)}</td></tr>`;
+        // Normalintervall: bara värden utanför färgas. Utan intervall: färg från 5 % förändring, som tidigare.
+        const dir = c.good && c.delta != null ? ((c.good === 'up') === (c.delta > 0) ? 'up' : 'down') : '';
+        const cls = band ? (c.outside && dir ? `${dir} out` : '') : (Math.abs(c.delta || 0) >= 5 ? dir : '');
+        const f = wowFmt(c.k);
+        const refCell = band && c.lo != null ? `${f(c.ref)}<span class="range">${f(c.lo)} – ${f(c.hi)}</span>` : f(c.ref);
+        return `<tr><td>${c.sv}</td><td class="n">${refCell}</td><td class="n">${f(c.cur)}</td><td class="n ${cls}">${fmtDelta(c.delta)}</td></tr>`;
       }).join('');
-      $('wow-sum').innerHTML = `<div class="find"><div class="find-head"><span class="label">Vecka mot vecka</span><span class="small muted num">${esc(W.curLabel)} mot ${esc(W.prevLabel)}</span></div><div class="bench-wrap"><table class="wow"><thead><tr><th>Mått</th><th>Veckan innan</th><th>Senaste 7 dagar</th><th>Förändring</th></tr></thead><tbody>${rows}</tbody></table></div>${W.notes ? `<p class="note">${esc(W.notes.join(' '))}</p>` : ''}${isPaid() ? '' : '<p class="note">Vilka kampanjer som drev förändringen finns i hela rapporten.</p>'}</div>`;
+      $('wow-sum').innerHTML = `<div class="find"><div class="find-head"><span class="label">Vecka mot vecka</span><span class="small muted num">${esc(W.curLabel)} mot ${esc(W.prevLabel)}</span></div><div class="bench-wrap"><table class="wow"><thead><tr><th>Mått</th><th>${esc(W.refLabel || 'Veckan innan')}</th><th>Senaste 7 dagar</th><th>Förändring</th></tr></thead><tbody>${rows}</tbody></table></div>${W.notes ? `<p class="note">${esc(W.notes.join(' '))}</p>` : ''}${isPaid() ? '' : '<p class="note">Vilka kampanjer som drev förändringen finns i hela rapporten.</p>'}</div>`;
     } else $('wow-sum').innerHTML = '';
     if (scroll) $('summary').scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' });
   }
@@ -576,7 +582,11 @@ export function startApp() {
     const prods = [['Artikel-id', 'Produkt', 'Kampanj', 'Skäl', 'Säkerhet', 'Klick', 'Kostnad/mån']].concat((r.productExclusions || []).map(p => [p.itemId, p.title, p.campaign, p.why, confText(p.confidence, p.risk), p.clicks, rnd(p.costMonthly)]));
     const titles = [['Artikel-id', 'Nuvarande titel', 'Förslag', 'Varför', 'Söktermer', 'Kostnad/mån']].concat((r.titleSuggestions || []).map(t => [t.itemId, t.title, t.suggestion, t.issues.join(' '), (t.terms || []).map(x => x.term).join(', '), rnd(t.costMonthly)]));
     const W = M.wow;
-    const wow = W.available ? [['Mått', 'Veckan innan', 'Senaste 7 dagar', 'Förändring %']].concat(W.changes.filter(c => c.cur != null).map(c => [c.sv, Math.round(c.prev * 100) / 100, Math.round(c.cur * 100) / 100, c.delta == null ? '' : Math.round(c.delta)])) : null;
+    const r2 = v => (v == null ? '' : Math.round(v * 100) / 100);
+    const wow = W.available ? [W.mode === 'band' ? ['Mått', 'Normalt (snitt)', 'Normalt från', 'Normalt till', 'Senaste 7 dagar', 'Förändring %', 'Utanför normalt'] : ['Mått', 'Veckan innan', 'Senaste 7 dagar', 'Förändring %']]
+      .concat(W.changes.filter(c => c.cur != null).map(c => W.mode === 'band'
+        ? [c.sv, r2(c.ref), r2(c.lo), r2(c.hi), r2(c.cur), c.delta == null ? '' : Math.round(c.delta), c.outside === 'low' ? 'Under' : c.outside === 'high' ? 'Över' : '']
+        : [c.sv, r2(c.prev), r2(c.cur), c.delta == null ? '' : Math.round(c.delta)])) : null;
     return { overview, bench, findings, rows, negs, pause, prods, titles, wow };
   }
 
@@ -592,7 +602,7 @@ export function startApp() {
     sheet('Sökord att pausa', t.pause, [34, 10, 36, 24, 22, 12]);
     sheet('Produkter att utesluta', t.prods, [22, 44, 30, 22, 8, 12]);
     sheet('Produkttitlar', t.titles, [20, 50, 60, 70, 40, 12]);
-    sheet('Vecka mot vecka', t.wow, [20, 14, 16, 14]);
+    sheet('Vecka mot vecka', t.wow, [20, 16, 14, 14, 16, 14, 14]);
     const buf = XLSX.write(wb, { bookType: 'xlsx', type: 'array' });
     await saveFile(`annonsbesiktning-${stamp()}.xlsx`, new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
   }
@@ -685,7 +695,8 @@ export function startApp() {
     if (P.available && P.projected != null) { h2('Budgettakt'); text(P.month ? `Med nuvarande takt landar ${P.month} på ${fmtKr(P.projected)} mot en budget på ${fmtKr(P.monthBudget)} (${Math.round(P.ratio * 100)} %).` : `Nuvarande takt motsvarar ${fmtKr(P.projected)} per månad mot en budget på ${fmtKr(P.monthBudget)}.`, 9.5); }
     const Wk = M.wow;
     if (Wk.available) { h2('Vecka mot vecka'); text(`${Wk.curLabel} mot ${Wk.prevLabel}`, 8.5, { color: C.muted }); y += 1;
-      table(['Mått', 'Veckan innan', 'Senaste 7 dagar', 'Förändring'], Wk.changes.filter(c => c.cur != null).map(c => { const f = ['ctr', 'cvr'].includes(c.k) ? fmtPct : ['cost', 'cpa', 'cpc'].includes(c.k) ? fmtKr : (v => v == null ? '–' : nf0.format(v)); return [c.sv, f(c.prev), f(c.cur), fmtDelta(c.delta)]; }), { 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' } }); }
+      table(['Mått', Wk.refLabel || 'Veckan innan', 'Senaste 7 dagar', 'Förändring'], Wk.changes.filter(c => c.cur != null).map(c => [c.sv, wowRef(Wk, c), wowFmt(c.k)(c.cur), fmtDelta(c.delta) + (c.outside ? ' (utanför)' : '')]), { 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' } });
+      if ((Wk.notes || []).length) text(Wk.notes.join(' '), 8.5, { color: C.muted }); }
     // Sidfot på varje sida
     const n = doc.getNumberOfPages();
     for (let i = 1; i <= n; i++) { doc.setPage(i); doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); color(C.muted);
@@ -723,7 +734,7 @@ export function startApp() {
     const pauseT = pk.length ? `<h2>Sökord att pausa (${pk.length} st)</h2><p>Importera CSV-filen i Google Ads Editor. Säsongssökord är undantagna.</p>${collT('<th>Sökord</th><th>Kampanj</th><th>Annonsgrupp</th><th>Skäl</th><th>Säkerhet</th><th class="r">Kostnad/mån</th>', pk.map(k => `<tr><td class="m">${e(k.keyword)}</td><td>${e(k.campaign)}</td><td>${e(k.adGroup || '–')}</td><td>${e(k.why)}</td><td>${e(confText(k.confidence, k.risk))}</td><td class="r">${fmtKr(k.costMonthly)}</td></tr>`))}` : '';
     const prodT = px.length ? `<h2>Produkter att utesluta (${px.length} st)</h2><p>Ladda upp CSV-filen som tilläggsflöde i Merchant Center (${e(CONFIG.productLabel.column)} = "${e(CONFIG.productLabel.value)}") och uteslut etiketten i kampanjen.</p>${collT('<th>Artikel-id</th><th>Produkt</th><th>Skäl</th><th>Säkerhet</th><th class="r">Kostnad/mån</th>', px.map(p => `<tr><td class="m">${e(p.itemId)}</td><td>${e(p.title || '–')}</td><td>${e(p.why)}</td><td>${e(confText(p.confidence, p.risk))}</td><td class="r">${fmtKr(p.costMonthly)}</td></tr>`))}` : '';
     const W = M.wow;
-    const wow = W.available ? `<h2>Vecka mot vecka</h2><p class="muted">${e(W.curLabel)} mot ${e(W.prevLabel)}</p><table><thead><tr><th>Mått</th><th class="r">Veckan innan</th><th class="r">Senaste 7 dagar</th><th class="r">Förändring</th></tr></thead><tbody>${W.changes.filter(c => c.cur != null).map(c => { const f = ['ctr', 'cvr'].includes(c.k) ? fmtPct : ['cost', 'cpa', 'cpc'].includes(c.k) ? fmtKr : (v => v == null ? '–' : nf0.format(v)); return `<tr><td>${c.sv}</td><td class="r">${f(c.prev)}</td><td class="r">${f(c.cur)}</td><td class="r">${fmtDelta(c.delta)}</td></tr>`; }).join('')}</tbody></table>` : '';
+    const wow = W.available ? `<h2>Vecka mot vecka</h2><p class="muted">${e(W.curLabel)} mot ${e(W.prevLabel)}</p><table><thead><tr><th>Mått</th><th class="r">${e(W.refLabel || 'Veckan innan')}</th><th class="r">Senaste 7 dagar</th><th class="r">Förändring</th></tr></thead><tbody>${W.changes.filter(c => c.cur != null).map(c => `<tr><td>${c.sv}</td><td class="r">${e(wowRef(W, c))}</td><td class="r">${wowFmt(c.k)(c.cur)}</td><td class="r"${c.outside ? ' style="font-weight:600"' : ''}>${fmtDelta(c.delta)}${c.outside ? ' utanför' : ''}</td></tr>`).join('')}</tbody></table>${(W.notes || []).length ? `<p class="muted">${e(W.notes.join(' '))}</p>` : ''}` : '';
     const P = M.pacing;
     const pace = P.available && P.projected != null ? `<h2>Budgettakt</h2><p>${P.month ? `Med nuvarande takt landar ${P.month} på ${fmtKr(P.projected)} mot en budget på ${fmtKr(P.monthBudget)} (${Math.round(P.ratio * 100)} %).` : `Nuvarande takt motsvarar ${fmtKr(P.projected)} per månad mot en budget på ${fmtKr(P.monthBudget)}.`}</p>` : '';
     return `<!doctype html><html lang="sv"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@300..700&family=JetBrains+Mono&display=swap"><title>Annonsbesiktning ${e(r.period.to || stamp())}</title><style>

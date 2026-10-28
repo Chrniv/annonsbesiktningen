@@ -274,7 +274,8 @@ const div = (a, b) => (b > 0 ? a / b : null);
 const pct = (a, b) => (a != null && b != null && b !== 0 ? (a - b) / Math.abs(b) * 100 : null);
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
 const STATS = Object.assign({ flagLevel: 0.15, ngramLevel: 0.10, sureLevel: 0.05, priorConversions: 1, winnerProbability: 0.8,
-  fairConversions: 30, minConversions: 10, fairClicks: 1000, minClicks: 200 }, CONFIG.stats || {});
+  fairConversions: 30, minConversions: 10, fairClicks: 1000, minClicks: 200,
+  bandWeeks: 4, maxBandWeeks: 12, bandZ: 2, bandZCrit: 3, bandMinChange: 0.10 }, CONFIG.stats || {});
 // Referens-CPA för ett objekt: kontots kostnad per konvertering, eller (e-handel) den CPA som objektet behöver
 // med sitt eget ordervärde för att nå referens-ROAS. Då blir både leads- och e-handelskonton samma test.
 const refCpaFor = (o, cpa, roas) => (roas > 0 && o.conv > 0 && o.value > 0 ? (o.value / o.conv) / roas : cpa);
@@ -773,23 +774,33 @@ function analyze(reports, opts) {
     pacing.cappedCount = capped.length;
   }
 
-  /* ===== Modul 4: Vecka mot vecka ===== */
+  /* ===== Modul 4: Vecka mot vecka =====
+     Senaste 7 dagarna jämförs med det normala intervallet för veckorna innan (snitt ± 2 standardavvikelser), inte bara med
+     veckan innan. En vecka som är 20 % sämre än förra veckan är ofta helt vanlig variation; först när den hamnar utanför vad
+     kontot brukar göra är den värd att agera på. Finns färre än STATS.bandWeeks tidigare veckor jämförs med veckan innan. */
   const wow = { id: 'wow', name: 'Vecka mot vecka', available: !!(camps.length && gran && periodDays >= 14) };
-  if (wow.available) {
-    let curR, prevR, curLabel, prevLabel;
-    if (gran === 'day') {
-      const L = dnum(to);
-      curR = camps.filter(r => r.date && dnum(r.date) > L - 7);
-      prevR = camps.filter(r => r.date && dnum(r.date) <= L - 7 && dnum(r.date) > L - 14);
-      curLabel = `${dstr(L - 6)} – ${to}`; prevLabel = `${dstr(L - 13)} – ${dstr(L - 7)}`;
-    } else {
-      const weeks = [...new Set(camps.map(r => r.date).filter(Boolean))].sort();
-      const w1 = weeks[weeks.length - 1], w0 = weeks[weeks.length - 2];
-      curR = camps.filter(r => r.date === w1); prevR = camps.filter(r => r.date === w0);
-      curLabel = `vecka från ${w1}`; prevLabel = `vecka från ${w0}`;
+  // Veckoblock, äldst först. Dagsdata: hela 7-dagarsblock bakåt från sista dagen, så varje block har samma veckodagar.
+  const blocks = [];
+  if (wow.available && gran === 'day') {
+    const L = dnum(to), F = dnum(from);
+    for (let i = 0; L - 7 * i - 6 >= F && i <= STATS.maxBandWeeks; i++) {
+      const hi = L - 7 * i, lo = hi - 6;
+      blocks.unshift({ from: dstr(lo), to: dstr(hi), rows: camps.filter(r => r.date && dnum(r.date) >= lo && dnum(r.date) <= hi) });
     }
-    const c = totals(curR), pv = totals(prevR);
-    wow.cur = c; wow.prev = pv; wow.curLabel = curLabel; wow.prevLabel = prevLabel;
+  } else if (wow.available) {
+    const ws = [...new Set(camps.map(r => r.date).filter(Boolean))].sort().slice(-(STATS.maxBandWeeks + 1));
+    ws.forEach(w => blocks.push({ from: w, to: dstr(dnum(w) + 6), rows: camps.filter(r => r.date === w) }));
+  }
+  if (blocks.length < 2) wow.available = false;
+  if (wow.available) {
+    const curB = blocks[blocks.length - 1], prevB = blocks[blocks.length - 2], hist = blocks.slice(0, -1);
+    const band = hist.length >= STATS.bandWeeks;
+    const c = totals(curB.rows), pv = totals(prevB.rows), H = hist.map(b => totals(b.rows));
+    const span = b => (gran === 'day' ? `${b.from} – ${b.to}` : `vecka från ${b.from}`);
+    wow.mode = band ? 'band' : 'pair';
+    wow.weeks = hist.length;
+    wow.cur = c; wow.prev = pv; wow.curLabel = span(curB); wow.prevLabel = band ? `${hist.length} veckor ${hist[0].from} – ${prevB.to}` : span(prevB);
+    wow.refLabel = band ? `Normalt (${hist.length} v)` : 'Veckan innan';
     const metrics = [
       { k: 'cost', sv: 'Kostnad', good: null },
       { k: 'clicks', sv: 'Klick', good: 'up' },
@@ -800,21 +811,57 @@ function analyze(reports, opts) {
       { k: 'cpc', sv: 'CPC', good: 'down' }
     ];
     if (c.roas != null && pv.roas != null) metrics.splice(4, 0, { k: 'roas', sv: 'ROAS', good: 'up' });
-    wow.changes = metrics.map(m => ({ ...m, cur: c[m.k], prev: pv[m.k], delta: pct(c[m.k], pv[m.k]) }));
-    const enough = pv.clicks >= 50 || pv.conv >= 5;
-    const perCamp = [...groupBy([...curR, ...prevR], 'campaign')].map(([name]) => {
-      const a = totals(curR.filter(r => r.campaign === name)), b = totals(prevR.filter(r => r.campaign === name));
-      return { name, dCost: a.cost - b.cost, dConv: a.conv - b.conv, dClicks: a.clicks - b.clicks };
+    // Slumpens minsta spridning för innevarande vecka: med få konverteringar kan kostnaden per konvertering hoppa mycket
+    // även om inget har ändrats, oavsett hur stabila de tidigare veckorna råkade vara.
+    const noiseFloor = (k, mean) => {
+      const conv = Math.max(1, c.conv || 0);
+      if (k === 'clicks' || k === 'conv') return Math.sqrt(Math.max(mean, 1));
+      if (k === 'cpa' || k === 'roas') return mean / Math.sqrt(conv);
+      if (k === 'cvr' || k === 'ctr') { const p = clamp(mean / 100, 0, 1), n = Math.max(1, k === 'cvr' ? c.clicks : c.impr); return 100 * Math.sqrt(p * (1 - p) / n); }
+      return 0;
+    };
+    wow.changes = metrics.map(m => {
+      const cur = c[m.k], prev = pv[m.k];
+      if (!band) return { ...m, cur, prev, ref: prev, delta: pct(cur, prev), lo: null, hi: null, z: null, outside: null };
+      const vals = H.map(t => t[m.k]).filter(v => v != null && isFinite(v));
+      if (vals.length < STATS.bandWeeks || cur == null) return { ...m, cur, prev, ref: null, delta: null, lo: null, hi: null, z: null, outside: null };
+      const mean = vals.reduce((s, v) => s + v, 0) / vals.length;
+      const sd = Math.sqrt(vals.reduce((s, v) => s + (v - mean) ** 2, 0) / (vals.length - 1));
+      const sdUse = Math.max(sd, noiseFloor(m.k, mean), Math.abs(mean) * 0.02);
+      const z = sdUse > 0 ? (cur - mean) / sdUse : 0;
+      const lo = Math.max(0, mean - STATS.bandZ * sdUse), hi = mean + STATS.bandZ * sdUse;
+      // Utanför intervallet OCH en förändring som spelar roll i praktiken (minst STATS.bandMinChange)
+      const delta = pct(cur, mean);
+      const outside = Math.abs(z) >= STATS.bandZ && Math.abs(delta || 0) >= STATS.bandMinChange * 100 ? (z < 0 ? 'low' : 'high') : null;
+      return { ...m, cur, prev, ref: mean, delta, lo, hi, z, outside };
     });
+    const isBad = ch => ch.good && ((ch.good === 'up' && ch.delta < 0) || (ch.good === 'down' && ch.delta > 0));
+    const refT = band ? H.reduce((s, t) => ({ clicks: s.clicks + t.clicks / H.length, conv: s.conv + t.conv / H.length }), { clicks: 0, conv: 0 }) : pv;
+    const enough = refT.clicks >= 50 || refT.conv >= 5;
+    // Jämförelsenivå per kampanj: snittveckan (normalläge) eller veckan innan
+    const histRows = band ? hist.flatMap(b => b.rows) : prevB.rows;
+    const div0 = band ? hist.length : 1;
+    const perCamp = [...groupBy([...curB.rows, ...histRows], 'campaign')].map(([name]) => {
+      const a = totals(curB.rows.filter(r => r.campaign === name)), b = totals(histRows.filter(r => r.campaign === name));
+      return { name, dCost: a.cost - b.cost / div0, dConv: a.conv - b.conv / div0, dClicks: a.clicks - b.clicks / div0 };
+    });
+    const refCpaW = band ? (() => { const t = totals(histRows); return t.cpa || 0; })() : (pv.cpa || 0);
+    const fmtM = (k, v) => (v == null ? '–' : ['ctr', 'cvr'].includes(k) ? fmtPct(v) : ['cost', 'cpa', 'cpc'].includes(k) ? fmtKr(v) : k === 'roas' ? nf2.format(v) : nf0.format(Math.round(v)));
+    // Svenska kalenderhändelser i innevarande vecka förklarar ofta en avvikelse (bara för konton i kronor)
+    const events = currency === 'SEK' ? eventsIn(curB.from, curB.to) : [];
+    wow.events = events;
+    const evText = events.length ? ` Obs: veckan innehåller ${events.join(' och ')}, vilket ofta påverkar en enskild vecka. Jämför med samma vecka förra året innan du ändrar något.` : '';
     let sc = 100;
-    const neg = wow.changes.filter(ch => ch.delta != null && ch.good && Math.abs(ch.delta) >= 20 && ((ch.good === 'up' && ch.delta < 0) || (ch.good === 'down' && ch.delta > 0)));
+    const neg = band
+      ? wow.changes.filter(ch => ch.outside && isBad(ch))
+      : wow.changes.filter(ch => ch.delta != null && ch.good && Math.abs(ch.delta) >= 20 && isBad(ch));
     if (enough) {
       for (const ch of neg) {
-        const sev = Math.abs(ch.delta) >= 35 ? 'crit' : 'warn';
+        const sev = band ? (Math.abs(ch.z) >= STATS.bandZCrit ? 'crit' : 'warn') : (Math.abs(ch.delta) >= 35 ? 'crit' : 'warn');
         sc -= sev === 'crit' ? 25 : 12;
         let driver = null, share = null;
         if (ch.k === 'cpa' || ch.k === 'roas') {
-          const contrib = perCamp.map(p => ({ ...p, v: p.dCost - (pv.cpa || 0) * p.dConv })).sort((a, b) => b.v - a.v);
+          const contrib = perCamp.map(p => ({ ...p, v: p.dCost - refCpaW * p.dConv })).sort((a, b) => b.v - a.v);
           const tot = contrib.filter(x => x.v > 0).reduce((s, x) => s + x.v, 0);
           if (contrib[0] && contrib[0].v > 0) { driver = contrib[0].name; share = contrib[0].v / tot; }
         } else if (ch.k === 'conv' || ch.k === 'clicks') {
@@ -823,12 +870,20 @@ function analyze(reports, opts) {
           const tot = s.filter(x => x[key] < 0).reduce((t, x) => t + x[key], 0);
           if (s[0] && s[0][key] < 0) { driver = s[0].name; share = s[0][key] / tot; }
         }
-        const why = ch.k === 'cpa' ? ` Klickpriset ändrades ${fmtDelta(pct(c.cpc, pv.cpc))} och konverteringsgraden ${fmtDelta(pct(c.cvr, pv.cvr))}.` : '';
-        add({ module: 'wow', sev, key: 'wow-' + ch.k, title: `${ch.sv} ${fmtDelta(ch.delta)} jämfört med veckan innan`, freeText: `Senaste 7 dagarna mot de 7 dagarna före.`, detail: (driver ? `${Math.round(share * 100)} % av förändringen kommer från en enda kampanj.` : 'Förändringen är spridd över flera kampanjer.') + why, items: driver ? [{ name: driver, value: `${Math.round(share * 100)} % av förändringen` }] : [] });
+        const refOf = k => (wow.changes.find(x => x.k === k) || {}).ref;
+        const why = ch.k === 'cpa' ? ` Klickpriset ändrades ${fmtDelta(pct(c.cpc, refOf('cpc')))} och konverteringsgraden ${fmtDelta(pct(c.cvr, refOf('cvr')))}.` : '';
+        const title = band ? `${ch.sv} ${fmtDelta(ch.delta)} jämfört med en normal vecka` : `${ch.sv} ${fmtDelta(ch.delta)} jämfört med veckan innan`;
+        const freeText = band
+          ? `Senaste 7 dagarna: ${fmtM(ch.k, ch.cur)}. De ${hist.length} veckorna innan låg normalt mellan ${fmtM(ch.k, ch.lo)} och ${fmtM(ch.k, ch.hi)}, så det här är mer än vanlig variation.`
+          : 'Senaste 7 dagarna mot de 7 dagarna före.';
+        add({ module: 'wow', sev, key: 'wow-' + ch.k, title, freeText, detail: (driver ? `${Math.round(share * 100)} % av förändringen kommer från en enda kampanj.` : 'Förändringen är spridd över flera kampanjer.') + why + evText, items: driver ? [{ name: driver, value: `${Math.round(share * 100)} % av förändringen` }] : [] });
       }
-      const pos = wow.changes.filter(ch => ch.delta != null && ch.good && Math.abs(ch.delta) >= 20 && !neg.includes(ch));
-      wow.positives = pos;
-    } else wow.notes = ['För lite trafik veckan innan för säkra slutsatser (under 50 klick).'];
+      wow.positives = band ? wow.changes.filter(ch => ch.outside && ch.good && !isBad(ch)) : wow.changes.filter(ch => ch.delta != null && ch.good && Math.abs(ch.delta) >= 20 && !neg.includes(ch));
+      wow.notes = [];
+      if (band) wow.notes.push(`Normalt intervall = snittet för de ${hist.length} veckorna innan ± ${String(STATS.bandZ).replace('.', ',')} standardavvikelser. Bara det som hamnar utanför flaggas.`);
+      else wow.notes.push(`Jämförs bara med veckan innan. Ladda upp minst ${(STATS.bandWeeks + 1) * 7} dagar med dagssegment (helst 8–12 veckor) så räknar vi fram ett normalt intervall och flaggar bara verkliga avvikelser.`);
+      if (events.length) wow.notes.push(`Veckan innehåller ${events.join(' och ')}.`);
+    } else wow.notes = [band ? 'För lite trafik per vecka för säkra slutsatser (under 50 klick).' : 'För lite trafik veckan innan för säkra slutsatser (under 50 klick).'];
     wow.enough = enough;
     wow.score = Math.round(clamp(sc, 10, 100));
     const head = wow.changes.find(ch => ch.k === 'cpa' && ch.delta != null) || wow.changes.find(ch => ch.k === 'conv');
@@ -1360,6 +1415,35 @@ function scoreFrom(fs, start) {
   fs.forEach(f => { s -= f.sev === 'crit' ? 30 : f.sev === 'warn' ? 12 : 3; });
   return Math.round(clamp(s, 5, 100));
 }
+/* ---------- Svenska kalenderhändelser ----------
+   Veckor med lönedag, högtider eller kampanjhelger avviker ofta utan att något är fel i kontot.
+   Händelserna förklarar en avvikelse; de döljer den inte. */
+function easterDay(y) {
+  const a = y % 19, b = Math.floor(y / 100), c = y % 100, d = Math.floor(b / 4), e = b % 4, f = Math.floor((b + 8) / 25), g = Math.floor((b - f + 1) / 3);
+  const h = (19 * a + b - d - g + 15) % 30, i = Math.floor(c / 4), k = c % 4, l = (32 + 2 * e + 2 * i - h - k) % 7, m = Math.floor((a + 11 * h + 22 * l) / 451);
+  const n = h + l - 7 * m + 114;
+  return Date.UTC(y, Math.floor(n / 31) - 1, (n % 31) + 1) / 864e5;
+}
+function seEvents(y) {
+  const d = (m, day) => Date.UTC(y, m - 1, day) / 864e5;
+  const dow = n => new Date(n * 864e5).getUTCDay(); // 0 = söndag
+  const ev = [];
+  // Lön betalas den 25:e, eller vardagen före om den 25:e är en helgdag
+  for (let m = 1; m <= 12; m++) { let p = d(m, 25); while (dow(p) === 0 || dow(p) === 6) p--; ev.push([p, p, 'lönedagen']); }
+  const e = easterDay(y); ev.push([e - 2, e + 1, 'påsken']);
+  let ms = d(6, 19); while (dow(ms) !== 5) ms++; ev.push([ms, ms + 1, 'midsommar']);
+  let md = d(5, 31); while (dow(md) !== 0) md--; ev.push([md, md, 'mors dag']);
+  let th = d(11, 1); while (dow(th) !== 4) th++; th += 21; ev.push([th + 1, th + 4, 'Black Friday-helgen']);
+  let fd = d(11, 1); while (dow(fd) !== 0) fd++; fd += 7; ev.push([fd, fd, 'fars dag']);
+  ev.push([d(2, 14), d(2, 14), 'alla hjärtans dag'], [d(12, 20), d(12, 26), 'julen'], [d(12, 31), d(12, 31), 'nyår'], [d(1, 1), d(1, 1), 'nyår']);
+  return ev;
+}
+function eventsIn(fromIso, toIso) {
+  const a = dnum(fromIso), b = dnum(toIso), out = [];
+  [...new Set([+fromIso.slice(0, 4), +toIso.slice(0, 4)])].forEach(y => seEvents(y).forEach(([s, e, l]) => { if (s <= b && e >= a && !out.includes(l)) out.push(l); }));
+  return out;
+}
+
 /* ---------- Tillräckligt med data? ----------
    Ett konto som kostat 2 000 kr och gett 4 konverteringar går inte att bedöma rättvist: ett enda köp hit eller dit
    ändrar kostnaden per konvertering med 25 %, och nästan inget sökord har hunnit samla nog med data för att flaggas.
@@ -1564,4 +1648,4 @@ function sampleFiles(endIso) {
   ];
 }
 
-export { readReport, analyze, sampleFiles, sampleFilesEcom, num, pdate, decodeBuffer, BENCH, CONFIG, fmtKr, fmtPct, fmtRange, fmtDelta, nf0, nf2, setCurrency, matchToEditor, negativesCsv, negativesPasteList, pauseKeywordsCsv, productsCsv, titlesCsv, buildTitleSuggestions };
+export { eventsIn, readReport, analyze, sampleFiles, sampleFilesEcom, num, pdate, decodeBuffer, BENCH, CONFIG, fmtKr, fmtPct, fmtRange, fmtDelta, nf0, nf2, setCurrency, matchToEditor, negativesCsv, negativesPasteList, pauseKeywordsCsv, productsCsv, titlesCsv, buildTitleSuggestions };

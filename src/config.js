@@ -40,7 +40,13 @@ export const CONFIG = {
     fairConversions: 30,    // så många konverteringar under perioden behövs för en rättvis bedömning
     minConversions: 10,     // under detta: "För lite data för en rättvis bedömning"
     fairClicks: 1000,       // samma sak mätt i klick, när kontot saknar konverteringar
-    minClicks: 200
+    minClicks: 200,
+    // Vecka mot vecka: senaste 7 dagarna mot snittet för tidigare veckor ± bandZ standardavvikelser
+    bandWeeks: 4,           // minst så många tidigare veckor för ett normalt intervall; annars jämförs med veckan innan
+    maxBandWeeks: 12,       // högst så många tidigare veckor räknas in
+    bandZ: 2,               // utanför ± 2 standardavvikelser = anmärkning
+    bandZCrit: 3,           // utanför ± 3 = allvarligt
+    bandMinChange: 0.10     // och förändringen måste vara minst 10 % för att räknas
   },
   leadRetentionMonths: 12,         // hur länge leads sparas; samma siffra står i samtyckestexten och policyn
   benchmarkSource: 'WordStream/LocaliQ Google Ads Benchmarks 2026 (13 474 amerikanska sökkampanjer, apr 2025–mar 2026, medianvärden)'
