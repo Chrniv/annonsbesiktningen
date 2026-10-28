@@ -104,3 +104,23 @@ test('dyra sökord: slump flaggas inte, merkostnaden krymps', () => {
   const pk = r.pauseKeywords.find(k => k.keyword === 'dyr och säker');
   assert.equal(pk.confidence, 'hög');
 });
+
+test('för lite data: tydlig notering med föreslagen period', () => {
+  // 30 dagar, 70 kr och 0,2 konverteringar per dag => 6 konverteringar totalt
+  const small = 'Campaign,Day,Clicks,Impr.,Currency code,Cost,Conversions\n' + Array.from({ length: 30 }, (_, i) => `Shop,2026-09-${String(i + 1).padStart(2, '0')},10,100,SEK,70,${i % 5 === 0 ? 1 : 0}`).join('\n');
+  const dq = run(['c.csv', small]).dataQuality;
+  assert.equal(dq.level, 'verylow');
+  assert.equal(dq.daysNeeded, 150, '30 konverteringar i takten 6 per 30 dagar');
+  assert.match(dq.text, /2\s100\skr/);
+  assert.match(dq.advice, /150 dagarna/);
+  // Mellanläge: 20 konverteringar
+  const mid = 'Campaign,Day,Clicks,Impr.,Currency code,Cost,Conversions\n' + Array.from({ length: 20 }, (_, i) => `Shop,2026-09-${String(i + 1).padStart(2, '0')},50,500,SEK,300,1`).join('\n');
+  assert.equal(run(['c.csv', mid]).dataQuality.level, 'low');
+  // Stort konto: ingen notering
+  assert.equal(run(['c.csv', CAMP]).dataQuality.level, 'ok');
+  // Mycket liten budget: inte ens ett år räcker
+  const tiny = 'Campaign,Day,Clicks,Impr.,Currency code,Cost,Conversions\n' + Array.from({ length: 30 }, (_, i) => `Shop,2026-09-${String(i + 1).padStart(2, '0')},3,30,SEK,10,${i === 0 ? 1 : 0}`).join('\n');
+  const t = run(['c.csv', tiny]).dataQuality;
+  assert.equal(t.daysNeeded, null);
+  assert.match(t.advice, /helt år/);
+});

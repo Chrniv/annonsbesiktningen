@@ -271,7 +271,12 @@ export function startApp() {
     $('score').innerHTML = r.overall == null ? '–' : `${r.overall}<small>/100</small>`;
     const st = $('stamp');
     st.className = 'stamp ' + (r.verdict ? r.verdict.key : '');
+    const dq = r.dataQuality || { level: 'ok' };
     st.textContent = r.verdict ? r.verdict.label : 'Ej bedömd';
+    if (dq.level !== 'ok' && r.verdict) st.insertAdjacentHTML('beforeend', ' <span class="prelim">· preliminärt</span>');
+    $('dq').hidden = dq.level === 'ok';
+    $('dq').className = 'dq ' + dq.level;
+    $('dq').innerHTML = dq.level === 'ok' ? '' : `<strong>${esc(dq.title)}</strong><p>${esc(dq.text)}</p><p>${esc(dq.advice)}</p>`;
     void st.offsetWidth; st.classList.add('go');
     $('verdict-text').textContent = r.verdict ? r.verdict.text : '';
     $('marker').style.left = (r.overall || 0) + '%';
@@ -359,7 +364,7 @@ export function startApp() {
       industry: r.industry, sample: state.sample,
       profile: { type: state.profile.type, margin: state.profile.margin || undefined, industry: state.profile.industry, industryText: state.profile.industryOther ? state.profile.industryText : undefined, campaigns: state.profile.campaigns, goal: state.profile.goal, budget: state.profile.budget },
       audit: {
-        score: r.overall, verdict: r.verdict && r.verdict.label, period: r.period,
+        score: r.overall, verdict: r.verdict && r.verdict.label, period: r.period, dataQuality: r.dataQuality ? r.dataQuality.level : undefined,
         spendMonthly: Math.round(r.spendMonthly), wasteMonthly: Math.round(r.wasteMonthly), potentialMonthly: Math.round(r.potentialMonthly), missedConvMonthly: Math.round(r.missedConvMonthly || 0),
         modules: Object.fromEntries(Object.values(r.modules).map(m => [m.id, m.available ? m.score : null])),
         findings: r.findings.map(f => ({ sev: f.sev, module: f.module, title: f.title, impactSek: f.impact ? Math.round(f.impact.sek || 0) : null, count: f.items.length, campaigns: f.module === 'waste' ? undefined : f.items.map(i => i.name).filter(n => r.campaigns.some(c => c.name === n)) })),
@@ -639,8 +644,10 @@ export function startApp() {
     y += 8; doc.setFont('helvetica', 'normal'); doc.setFontSize(46); color(C.ink); doc.text(String(r.overall == null ? '–' : r.overall), L, y + 10);
     const sw = doc.getTextWidth(String(r.overall == null ? '–' : r.overall)); doc.setFontSize(12); color(C.muted); doc.text('/100', L + sw + 1.5, y + 10);
     const vcol = r.verdict ? { pass: C.good, remarks: C.warn, fail: C.crit, ban: C.crit }[r.verdict.key] : C.muted;
-    const vy = y; y = vy + 2; text(r.verdict ? r.verdict.label : '', 12, { bold: true, color: vcol, x: L + 50, width: CW - 50 }); text(r.verdict ? r.verdict.text : '', 10, { color: C.muted, x: L + 50, width: CW - 50 });
+    const dqPdf = r.dataQuality && r.dataQuality.level !== 'ok' ? r.dataQuality : null;
+    const vy = y; y = vy + 2; text(r.verdict ? r.verdict.label + (dqPdf ? ' · preliminärt' : '') : '', 12, { bold: true, color: vcol, x: L + 50, width: CW - 50 }); text(r.verdict ? r.verdict.text : '', 10, { color: C.muted, x: L + 50, width: CW - 50 });
     y = Math.max(y, vy + 16);
+    if (dqPdf) { y += 2; text(dqPdf.title, 10.5, { bold: true, color: dqPdf.level === 'verylow' ? C.crit : C.warn }); text(`${dqPdf.text} ${dqPdf.advice}`, 9.5, { color: C.muted }); y += 3; }
     // Nyckeltal
     const figs = [['Uppskattat slöseri', M.waste.available ? fmtKr(r.wasteMonthly) : '–', 'per månad'], ['Möjlig besparing', S.high ? fmtRange(S.low, S.high) : '–', 'per månad'], ['Missade konverteringar', r.missedConvMonthly ? 'ca ' + Math.round(r.missedConvMonthly) : '–', 'per månad'], ['Fynd', String(r.findings.length), `${r.counts.crit} allvarliga, ${r.counts.warn} anmärkningar`]];
     const bw = (CW - 9) / 4; need(26);
@@ -704,6 +711,7 @@ export function startApp() {
 
   function buildReportHtml(r) {
     const e = esc, sevTxt = { crit: 'Allvarligt fel', warn: 'Anmärkning', info: 'Notering' };
+    const dqOk = !r.dataQuality || r.dataQuality.level === 'ok';
     const M = r.modules, bm = M.performance.benchmark.metrics;
     const benchRows = [['ctr', 'Klickfrekvens (CTR)', fmtPct], ['cvr', 'Konverteringsgrad', fmtPct], ['cpc', 'Kostnad per klick', fmtKr], ['cpa', 'Kostnad per konvertering', fmtKr]]
       .map(([k, l, f]) => `<tr><td>${l}</td><td>${f(bm[k].you)}</td><td>${bm[k].verdict === 'nocur' ? nf2.format(bm[k].bench) + ' USD' : f(bm[k].bench)}</td></tr>`).join('');
@@ -734,7 +742,8 @@ table{width:100%;border-collapse:collapse;margin:10px 0;font-size:14px}td,th{bor
 <div class="meta"><span>Period: ${e(r.period.from ? r.period.from + ' – ' + r.period.to : 'okänd')}</span><span>Bransch: ${e(r.industry)}</span><span>Kostnad per månad: ${fmtKr(r.spendMonthly)}</span><span>Skapad: ${stamp()}</span></div>
 <button class="print" onclick="window.print()">Skriv ut eller spara som PDF</button>
 <p class="score">${r.overall == null ? '–' : r.overall}<span style="font-size:20px;color:#687270;letter-spacing:0">/100</span></p>
-<p class="verdict">${e(r.verdict ? r.verdict.label : '')}</p><p>${e(r.verdict ? r.verdict.text : '')}</p>
+<p class="verdict">${e(r.verdict ? r.verdict.label : '')}${dqOk ? '' : ' · preliminärt'}</p><p>${e(r.verdict ? r.verdict.text : '')}</p>
+${dqOk ? '' : `<div style="margin:18px 0;padding:14px 16px;border-left:3px solid ${r.dataQuality.level === 'verylow' ? '#B4442E' : '#B07A12'};background:#F7F3EA;border-radius:8px"><b>${e(r.dataQuality.title)}</b><p style="margin:6px 0 0">${e(r.dataQuality.text)} ${e(r.dataQuality.advice)}</p></div>`}
 <div class="figs"><div>Uppskattat slöseri<b>${M.waste.available ? fmtKr(r.wasteMonthly) : '–'}</b>per månad</div><div>Möjlig besparing<b>${(r.savings || {}).high ? fmtRange(r.savings.low, r.savings.high) : '–'}</b>per månad</div><div>Missade konverteringar<b>${r.missedConvMonthly ? '≈ ' + Math.round(r.missedConvMonthly) : '–'}</b>per månad</div><div>Fynd<b>${r.findings.length}</b>${r.counts.crit} allvarliga, ${r.counts.warn} anmärkningar</div></div>
 ${(r.narrative || []).length ? `<h2>Analys</h2>${r.narrative.map(p => `<h3>${e(p.h)}</h3><p>${e(p.t)}</p>`).join('')}` : ''}
 <h2>Du mot branschen</h2><p class="muted">${e(M.performance.benchmark.industry)}, ${e(M.performance.benchmark.scope)}</p><table><thead><tr><th>Mått</th><th>Ditt konto</th><th>Branschsnitt</th></tr></thead><tbody>${benchRows}</tbody></table>

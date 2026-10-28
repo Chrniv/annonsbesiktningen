@@ -273,7 +273,8 @@ const sum = (a, k) => a.reduce((s, o) => s + (o[k] || 0), 0);
 const div = (a, b) => (b > 0 ? a / b : null);
 const pct = (a, b) => (a != null && b != null && b !== 0 ? (a - b) / Math.abs(b) * 100 : null);
 const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
-const STATS = Object.assign({ flagLevel: 0.15, ngramLevel: 0.10, sureLevel: 0.05, priorConversions: 1, winnerProbability: 0.8 }, CONFIG.stats || {});
+const STATS = Object.assign({ flagLevel: 0.15, ngramLevel: 0.10, sureLevel: 0.05, priorConversions: 1, winnerProbability: 0.8,
+  fairConversions: 30, minConversions: 10, fairClicks: 1000, minClicks: 200 }, CONFIG.stats || {});
 // Referens-CPA för ett objekt: kontots kostnad per konvertering, eller (e-handel) den CPA som objektet behöver
 // med sitt eget ordervärde för att nå referens-ROAS. Då blir både leads- och e-handelskonton samma test.
 const refCpaFor = (o, cpa, roas) => (roas > 0 && o.conv > 0 && o.value > 0 ? (o.value / o.conv) / roas : cpa);
@@ -850,11 +851,12 @@ function analyze(reports, opts) {
   const narrative = buildNarrative({ acct, acctCPA, campAgg, mf, findings, savings, ecom: acct.value > 0, prodMod, currency });
   const sevRank = { crit: 0, warn: 1, info: 2 };
   findings.sort((a, b) => sevRank[a.sev] - sevRank[b.sev] || ((b.impact?.sek || 0) - (a.impact?.sek || 0)));
+  const dataQuality = assessData(acct, periodDays, assumed);
   const missedConv = findings.filter(f => f.impact && f.impact.kind === 'opportunity').reduce((s, f) => s + (f.impact.conv || 0), 0);
   const potential = findings.filter(f => f.impact && f.impact.kind === 'potential').reduce((s, f) => s + (f.impact.sek || 0), 0);
 
   return {
-    overall, verdict: verdictFor(overall), modules: { performance: perf, waste, pacing, wow }, findings,
+    overall, verdict: verdictFor(overall), dataQuality, modules: { performance: perf, waste, pacing, wow }, findings,
     counts: { crit: findings.filter(f => f.sev === 'crit').length, warn: findings.filter(f => f.sev === 'warn').length, info: findings.filter(f => f.sev === 'info').length },
     wasteMonthly: wasteSek, potentialMonthly: potential, missedConvMonthly: missedConv,
     spendMonthly: acct.cost * mf, account: acct,
@@ -1358,6 +1360,37 @@ function scoreFrom(fs, start) {
   fs.forEach(f => { s -= f.sev === 'crit' ? 30 : f.sev === 'warn' ? 12 : 3; });
   return Math.round(clamp(s, 5, 100));
 }
+/* ---------- Tillräckligt med data? ----------
+   Ett konto som kostat 2 000 kr och gett 4 konverteringar går inte att bedöma rättvist: ett enda köp hit eller dit
+   ändrar kostnaden per konvertering med 25 %, och nästan inget sökord har hunnit samla nog med data för att flaggas.
+   Då blir betyget högt för att inget kunde bevisas, inte för att kontot är bra. Den här bedömningen säger hur mycket
+   betyget och fynden går att lita på, och hur lång period som behövs för en rättvis bedömning. */
+function assessData(acct, periodDays, assumed) {
+  const { fairConversions: fairC, minConversions: minC, fairClicks: fairK, minClicks: minK } = STATS;
+  const conv = acct.conv || 0, clicks = acct.clicks || 0, cost = acct.cost || 0;
+  // Utan konverteringar (spårningen saknas) bedöms mängden på klick i stället
+  const byConv = conv > 0;
+  const have = byConv ? conv : clicks, fair = byConv ? fairC : fairK, min = byConv ? minC : minK;
+  let level = have >= fair ? 'ok' : have >= min ? 'low' : 'verylow';
+  if (byConv && clicks < minK) level = 'verylow';
+  const out = { level, conv, clicks, cost, periodDays, assumed, basis: byConv ? 'conversions' : 'clicks', fair };
+  if (level === 'ok') return out;
+  // Hur många dagar behövs i nuvarande takt för att nå en rättvis mängd?
+  const perDay = have / Math.max(1, periodDays);
+  const days = perDay > 0 ? Math.ceil(fair / perDay) : Infinity;
+  out.daysNeeded = days <= 365 ? Math.max(days, periodDays + 1) : null;
+  const unit = byConv ? 'konverteringar' : 'klick';
+  const pd = assumed ? 'perioden' : `de ${nf0.format(periodDays)} dagarna`;
+  out.title = level === 'verylow' ? 'För lite data för en rättvis bedömning' : 'Begränsad data: tolka resultatet försiktigt';
+  out.text = `Under ${pd} har kontot kostat ${fmtKr(cost)} och gett ${nf0.format(Math.round(have))} ${unit}. `
+    + `För en rättvis bedömning behövs runt ${nf0.format(fair)} ${unit}. Med mindre kan enstaka klick eller köp avgöra resultatet, `
+    + 'så vi flaggar bara det som är tydligt, och betyget kan vara högre än kontot förtjänar.';
+  out.advice = out.daysNeeded
+    ? `Ladda upp samma rapporter för de senaste ${nf0.format(out.daysNeeded)} dagarna i stället, så räcker datan.`
+    : 'Även ett helt år ger för lite data med nuvarande budget. Bedömningen bygger därför mest på mönster och branschsnitt, inte på kontots egna siffror.';
+  return out;
+}
+
 function verdictFor(s) {
   if (s == null) return null;
   if (s >= 80) return { key: 'pass', label: 'Godkänd', text: 'Kontot är i gott skick. Några justeringar kan ändå ge mer.' };

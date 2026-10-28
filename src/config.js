@@ -35,7 +35,12 @@ export const CONFIG = {
     ngramLevel: 0.10,       // strängare för återkommande ord: vi testar hundratals ord, så några ser dåliga ut av slump
     sureLevel: 0.05,        // högst 5 % risk = "hög" säkerhet; krävs också för ord som kontot har egna sökord för
     priorConversions: 1,    // krympning: varje objekt antas ha en konvertering till snittpris i bagaget
-    winnerProbability: 0.8  // söktermer föreslås som nya sökord först när de med minst 80 % sannolikhet är bättre än snittet
+    winnerProbability: 0.8, // söktermer föreslås som nya sökord först när de med minst 80 % sannolikhet är bättre än snittet
+    // Tillräckligt med data för en rättvis bedömning av kontot? Under "fair" visas en notering och betyget märks preliminärt.
+    fairConversions: 30,    // så många konverteringar under perioden behövs för en rättvis bedömning
+    minConversions: 10,     // under detta: "För lite data för en rättvis bedömning"
+    fairClicks: 1000,       // samma sak mätt i klick, när kontot saknar konverteringar
+    minClicks: 200
   },
   leadRetentionMonths: 12,         // hur länge leads sparas; samma siffra står i samtyckestexten och policyn
   benchmarkSource: 'WordStream/LocaliQ Google Ads Benchmarks 2026 (13 474 amerikanska sökkampanjer, apr 2025–mar 2026, medianvärden)'

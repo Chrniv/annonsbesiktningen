@@ -90,6 +90,12 @@ button, input, select, textarea { font: inherit; color: inherit }
 .stamp::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: currentColor }
 .stamp.pass { color: var(--good); background: color-mix(in srgb, var(--good) 11%, transparent) }
 .stamp.remarks { color: var(--warn); background: color-mix(in srgb, var(--warn) 12%, transparent) }
+.dq { margin-top: 22px; padding: 14px 16px; border-radius: 10px; border-left: 3px solid var(--warn); background: color-mix(in srgb, var(--warn) 8%, transparent) }
+.dq.verylow { border-left-color: var(--crit); background: color-mix(in srgb, var(--crit) 7%, transparent) }
+.dq strong { display: block; margin-bottom: 4px }
+.dq p { margin: 0; font-size: 14px }
+.dq p + p { margin-top: 6px }
+.stamp .prelim { font-weight: 500; opacity: .75 }
 .stamp.fail, .stamp.ban { color: var(--crit); background: color-mix(in srgb, var(--crit) 11%, transparent) }
 @media (prefers-reduced-motion: no-preference) { .stamp.go { animation: rise .5s ease-out both } }
 @keyframes rise { from { opacity: 0; transform: translateY(4px) } to { opacity: 1; transform: none } }
