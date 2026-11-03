@@ -279,3 +279,7 @@ footer.foot a { color: inherit }
 .ci-head { margin-top: 22px; padding: 16px 18px; border-radius: 12px; background: color-mix(in srgb, var(--sign) 9%, transparent); border-left: 3px solid var(--sign) }
 .ci-lead { margin: 0 0 4px; font-size: 19px; font-weight: 600; letter-spacing: -.01em; line-height: 1.35 }
 .ci-head .small { margin: 0 }
+
+.margin-hint { margin-top: 14px; padding: 14px 16px; border-radius: 10px; border: 1px dashed var(--line) }
+.margin-hint p { margin: 0 0 8px }
+.margin-hint select { font: inherit; padding: 6px 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--surface); color: inherit }

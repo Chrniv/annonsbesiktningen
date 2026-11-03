@@ -25,7 +25,7 @@ export const CONFIG = {
 
   productLabel: { column: 'custom_label_4', value: 'exkludera' }, // etikett i Merchant Center-tilläggsflödet för produkter att utesluta
   usdToSek: 9.7,                   // växelkurs för branschsnitt i USD (okt 2026)
-  fxToSek: { SEK: 1, USD: 9.7, EUR: 11.0, NOK: 1.0, DKK: 1.48, GBP: 13.0 }, // ungefärliga kurser, okt 2026
+  fxToSek: { SEK: 1, USD: 9.7, EUR: 11.0, NOK: 1.0, DKK: 1.48, GBP: 13.0, CHF: 12.0, PLN: 2.6, CZK: 0.44, HUF: 0.028 }, // ungefärliga kurser, okt 2026
   ownBrands: [],                   // egna varumärken som får användas i titlar och annonser, t.ex. ['smartphoto']
 
   // Statistik (se src/stats.js). "Risk" = sannolikheten att något som egentligen presterar som kontots snitt

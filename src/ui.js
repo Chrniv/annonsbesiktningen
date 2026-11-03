@@ -94,7 +94,7 @@ export function startApp() {
     $('q-campaigns').querySelector('.opts').innerHTML = Q.campaigns.map(o => optBtn('campaigns', o, true)).join('');
     $('q-goal').querySelector('.opts').innerHTML = Q.goal.map(o => optBtn('goal', o)).join('');
     $('q-budget').querySelector('.opts').innerHTML = Q.budget.map(o => optBtn('budget', o)).join('');
-    $('q-margin').hidden = P.type !== 'ecom' && P.goal !== 'purchase' && P.goal !== 'both';
+    $('q-margin').hidden = (P.type === 'local' || P.type === 'b2b') && P.goal === 'lead';
     $('q-margin').querySelector('.opts').innerHTML = Q.margin.map(o => optBtn('margin', o)).join('');
   }
   const QUIZ_HTML = $('quiz').innerHTML;
@@ -136,6 +136,7 @@ export function startApp() {
     if (!skipped && (!P.type || !P.industry)) { $('quiz-error').hidden = false; $('quiz-error').textContent = 'Välj vad ni gör och vilken bransch som ligger närmast.'; return; }
     P.done = !skipped;
     if (P.industry) $('industry').value = P.industry;
+    $('margin-sel').value = P.margin || '';
     const quiz = $('quiz');
     quiz.innerHTML = skipped
       ? `<div class="quiz-done"><span>Du hoppade över frågorna.</span><button class="btn link" type="button" id="quiz-again">Svara på frågorna</button></div>`
@@ -248,7 +249,13 @@ export function startApp() {
     run((ecom ? sampleFilesEcom(end) : sampleFiles(end)).map(f => readReport(f.name, f.text)), true, scroll);
   }
 
+  ['margin-sel', 'margin-sel2'].forEach(id => $(id).addEventListener('change', () => {
+    state.profile.margin = $(id).value || null;
+    $('margin-sel').value = $('margin-sel2').value = state.profile.margin || '';
+    if (state.lastReports) run(state.lastReports, state.sample, false);
+  }));
   function run(reports, sample, scroll = true) {
+    state.lastReports = reports;
     state.sample = sample; state.unlocked = !!state.paidPending; state.paid = !!state.paidPending && !sample; state.lead = null; $('lead-note').hidden = true; markActiveLead();
     const res = analyze(reports, { industry: $('industry').value, margin: state.profile.margin ? Number(state.profile.margin) : null, brandName: state.profile.brandName || '' });
     state.result = res;
@@ -290,6 +297,7 @@ export function startApp() {
     const head = savingsHeadline(S, dq.level !== 'ok');
     $('ci-head').hidden = !head;
     if (head) { $('ci-lead').textContent = head.lead; $('ci-sub').textContent = head.sub; }
+    $('margin-hint').hidden = !(r.account && r.account.value > 0) || !!state.profile.margin;
     $('figures').innerHTML = `
       <div><span class="label">Uppskattat slöseri</span><span class="big">${r.modules.waste.available ? fmtKr(r.wasteMonthly) : '–'}</span><span class="small muted">${r.modules.waste.available ? `per månad, ${Math.round(r.modules.waste.pct * 100)} % av kostnaden` : 'Ladda upp söktermer för att räkna ut'}</span></div>
       <div><span class="label">Möjlig besparing</span><span class="big">${S.high ? fmtRange(S.low, S.high) : '–'}</span><span class="small muted">${S.high ? `per månad, ${S.ci ? Math.round(S.ci.level * 100) + ' % säkert intervall' : 'om åtgärderna genomförs'}${S.convHigh ? `, eller ≈ ${Math.round(S.convLow)}–${Math.round(S.convHigh)} fler konverteringar` : ''}` : 'Inga tydliga besparingar hittades'}</span></div>

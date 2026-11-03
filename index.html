@@ -81,8 +81,13 @@
         <select id="industry"></select>
       </div>
       <div class="field">
+        <label class="label" for="margin-sel">Bruttomarginal</label>
+        <select id="margin-sel"><option value="">Vet inte / ej e-handel</option><option value="0.3">Runt 30 %</option><option value="0.4">Runt 40 %</option><option value="0.5">Runt 50 %</option><option value="0.6">Runt 60 %</option><option value="0.7">70 % eller mer</option></select>
+        <p class="small muted">Efter inköp och frakt, före annonser. Behövs för att se vad som går med förlust.</p>
+      </div>
+      <div class="field">
         <span class="label">Valuta</span>
-        <p class="small">Läses från exporten (SEK, NOK, DKK, EUR, USD eller GBP). Branschsnittet räknas om till kontots valuta.</p>
+        <p class="small">Läses från exporten (SEK, NOK, DKK, EUR, USD, GBP, CHF, PLN, CZK eller HUF). Branschsnittet räknas om till kontots valuta.</p>
       </div>
     </div>
     <label class="drop" id="drop" for="files">
@@ -125,6 +130,7 @@
       </div>
     </div>
     <div class="ci-head" id="ci-head" hidden><p class="ci-lead" id="ci-lead"></p><p class="small muted" id="ci-sub"></p></div>
+    <div class="margin-hint" id="margin-hint" hidden><p><strong>Ange er bruttomarginal för att se vad som går med förlust.</strong> Utan den räknas bara rena slöseriet, och i ett välskött konto ligger de stora pengarna oftast i det som säljer under break-even.</p><label class="small" for="margin-sel2">Bruttomarginal</label> <select id="margin-sel2"><option value="">Välj</option><option value="0.3">Runt 30 %</option><option value="0.4">Runt 40 %</option><option value="0.5">Runt 50 %</option><option value="0.6">Runt 60 %</option><option value="0.7">70 % eller mer</option></select></div>
     <div class="dq" id="dq" role="note" hidden></div>
     <div class="figures" id="figures"></div>
     <div class="modules" id="modules"></div>
