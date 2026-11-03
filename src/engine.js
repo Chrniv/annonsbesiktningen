@@ -211,14 +211,19 @@ function readReport(name, text) {
 
   const idCol = type === 'searchTerms' ? map.searchTerm : type === 'keywords' ? map.keyword : type === 'products' ? map.itemId : map.campaign;
   const pre = rows.slice(0, hi).map(r => r.join(' ')).join(' ');
-  const titleDates = findDatesIn(pre).sort();
+  // Jämförelseexporter: bara perioden före "compared to" gäller, annars blir perioden ett år för lång
+  const titleDates = findDatesIn(pre.split(/compared to|jämfört med|jämfört mot/i)[0]).sort();
 
   const get = (r, k) => (map[k] == null ? '' : r[map[k]]);
   const out = [];
   let currency = '';
+  let filtered = false, accountTotal = null;
   for (const r of rows.slice(hi + 1)) {
     const id = String(r[idCol] || '').trim();
     const first = String(r.find(c => String(c).trim()) || '').trim().toLowerCase();
+    // Google Ads skriver "Total: Filtered ..." när ett filter var aktivt vid exporten, och "Total: Account" med hela kontots siffror
+    if (/^(total|totalt|summa):?\s*(filtered|filtrerade)/.test(first)) filtered = true;
+    if (/^(total|totalt|summa):?\s*(account|konto)/.test(first) && map.cost != null) accountTotal = num(r[map.cost], dc);
     if (!id || id === '--' || /^total/.test(first) || /^total/.test(id.toLowerCase())) continue;
     const o = {
       campaign: String(get(r, 'campaign') || '').trim(),
@@ -265,7 +270,7 @@ function readReport(name, text) {
   if (type === 'keywords' && map.qs == null) missing.push('Kvalitetsresultat');
   if (type === 'products' && map.value == null) missing.push('Konv.värde');
   if (map.conv == null) missing.push('Konverteringar');
-  return { name, type, rows: out, map, period, currency, swedish, dc, delim, missing, hasDates: !!gran };
+  return { name, type, rows: out, map, period, currency, swedish, dc, delim, missing, hasDates: !!gran, filtered, accountTotal };
 }
 
 /* ---------- Hjälpare ---------- */
@@ -508,6 +513,26 @@ function analyze(reports, opts) {
     if (lr > 0.4) add({ module: 'performance', sev: lr > 0.6 ? 'crit' : 'warn', key: 'rank', title: `Annonserna missar ${Math.round(lr * 100)} % av möjliga visningar på grund av låg rankning`, freeText: 'Konkurrenterna vinner auktionerna oftare, oftast på grund av bud eller annonsernas relevans.', detail: 'Kampanjer med störst andel förlorade visningar på grund av rankning.', items: w.sort((a, b) => b.lostRank - a.lostRank).slice(0, 5).map(c => ({ name: c.name, value: `${Math.round(c.lostRank * 100)} % förlorat` })) });
   }
   perf.score = scoreFrom(findings.filter(f => f.module === 'performance'), 100, bm);
+
+  // Täckning: hur stor del av kontots kostnad syns i sökterms- och sökordsrapporterna? Ett filter vid exporten
+  // eller Performance Max-kampanjer (vars söktermer inte går att exportera fullt ut) gör att slöseriet underskattas.
+  {
+    const notes = [];
+    for (const t of ['searchTerms', 'keywords']) {
+      const r = reports.find(x => x.type === t); if (!r) continue;
+      const label = t === 'searchTerms' ? 'Söktermsrapporten' : 'Sökordsrapporten';
+      if (r.filtered) notes.push({ name: label, value: `filtrerad vid exporten, bara ${nf0.format(r.rows.length)} rader` });
+    }
+    const termCost = sum(sts, 'cost') * mfFor('searchTerms'), acctMonthly = acct.cost * mfAcct;
+    const pmaxCost = campAgg.filter(c => /(performance max|pmax)/i.test(c.type || '') || /pmax/i.test(c.name)).reduce((s2, c) => s2 + c.cost, 0) * mfAcct;
+    if (sts.length && acctMonthly > 0 && termCost / acctMonthly < 0.5) notes.push({ name: 'Söktermer i rapporten', value: `${Math.round(termCost / acctMonthly * 100)} % av kontots kostnad` });
+    if (pmaxCost / (acctMonthly || 1) > 0.3) notes.push({ name: 'Performance Max', value: `${Math.round(pmaxCost / acctMonthly * 100)} % av kostnaden, söktermerna syns bara delvis` });
+    if (notes.length) add({ module: 'waste', sev: reports.some(r => r.filtered) ? 'warn' : 'info', key: 'coverage',
+      title: reports.some(r => r.filtered) ? 'Rapporterna är filtrerade, så slöseriet är underskattat' : 'Stora delar av kostnaden syns inte i söktermerna',
+      freeText: 'Besparingen gäller bara det som finns i de uppladdade filerna. Den verkliga siffran är troligen högre.',
+      detail: 'Exportera söktermsrapporten utan filter och för minst 30 dagar. För Performance Max: ladda upp produktrapporten, och se kampanjens sökinsikter i Google Ads.',
+      items: notes });
+  }
 
   /* ===== Modul 2: Slöseri ===== */
   const waste = { id: 'waste', name: 'Slöseri', available: sts.length > 0 || kws.length > 0, source: sts.length ? 'söktermer' : kws.length ? 'sökord' : null };
@@ -1429,6 +1454,11 @@ function addTips(findings, ctx) {
       `Ladda upp "Produkter att utesluta (CSV)" som tilläggsflöde; produkterna är med i filen med etiketten ${CONFIG.productLabel.column}.`,
       'Alternativ: lägg dem i en egen kampanj med mål-ROAS över break-even i stället för att utesluta dem helt.',
       'Se över pris och marginal: en produkt med låg ROAS kan bli lönsam med ett högre pris eller billigare inköp.'
+    ],
+    coverage: f => [
+      'Ta bort alla filter i söktermsrapporten innan du exporterar (filterraden ovanför tabellen ska vara tom).',
+      'Välj minst de senaste 30 dagarna, gärna 90 om kontot har färre än 100 konverteringar i månaden.',
+      'Har kontot Performance Max: ladda upp rapporten Produkter också, så kan produkter utan försäljning hittas.'
     ],
     ngramsCore: f => [
       'Kontrollera att produkterna finns i lager, har konkurrenskraftigt pris och en tydlig produktbild.',

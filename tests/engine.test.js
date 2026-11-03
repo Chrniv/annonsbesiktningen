@@ -151,3 +151,10 @@ test('varumärkeskampanj utan "brand" i namnet känns igen från varumärkesnamn
   assert.deepEqual(E.analyze(reps, { industry: 'shopping' }).modules.performance.brandCampaigns, []);
   assert.deepEqual(E.analyze(reps, { industry: 'shopping', brandName: 'Fotohörnan' }).modules.performance.brandCampaigns, ['Sök 1']);
 });
+
+test('jämförelseexport utan dagkolumn: perioden tas bara från före "compared to"', () => {
+  const t = 'Search keyword\n4 October 2026 - 2 November 2026 compared to 4 October 2025 - 2 November 2025\nSearch keyword,Campaign,Currency code,Clicks,Impr.,Cost,Conversions\nfotobok,A,SEK,10,100,50,1\nTotal: Filtered search keywords,,SEK,10,100,50,1\n';
+  const r = E.readReport('k.csv', t);
+  assert.equal(r.period.from, '2026-10-04');
+  assert.equal(r.filtered, true);
+});
