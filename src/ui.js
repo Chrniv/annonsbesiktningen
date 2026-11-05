@@ -453,7 +453,27 @@ export function startApp() {
   const TOGGLE_JS = "document.addEventListener('click'," + onToggle.toString() + ");";
 
   /* ===== Köp och leverans ===== */
+  // Snabbval högst upp i protokollet: ladda ner direkt om rapporten är köpt, annars köp eller lämna e-post
+  function renderQuickDl() {
+    const q = $('quick-dl');
+    if (!state.result) { q.hidden = true; return; }
+    q.hidden = false;
+    if (isPaid()) {
+      q.innerHTML = `<span class="qd-label">Ladda ner rapporten</span><button class="btn primary" type="button" data-qd="dl-pdf">PDF</button><button class="btn primary" type="button" data-qd="dl-xlsx">Excel</button><button class="btn" type="button" data-qd="dl-csv">CSV</button><button class="btn link" type="button" data-qd-go="deliver">Listor att ladda upp i Google Ads ↓</button><span class="small muted" id="qd-msg" aria-live="polite"></span>`;
+    } else if (state.sample) {
+      q.innerHTML = `<span class="qd-label">Exempelprotokoll</span><span class="small muted">Ladda upp dina egna rapporter för att kunna ladda ner hela rapporten.</span>`;
+    } else {
+      q.innerHTML = `<span class="qd-label">Hela rapporten</span><button class="btn primary" type="button" data-qd-buy="1">${state.unlocked ? `Köp och ladda ner – ${esc(CONFIG.reportPrice)}` : 'Ladda ner hela rapporten'}</button><span class="small muted">PDF, Excel och färdiga listor för Google Ads${state.unlocked ? '' : ' · börja med din e-post'}</span>`;
+    }
+  }
+  $('quick-dl').addEventListener('click', ev => {
+    const b = ev.target.closest('button'); if (!b) return;
+    if (b.dataset.qd) { const fn = { 'dl-pdf': downloadPdf, 'dl-xlsx': downloadXlsx, 'dl-csv': downloadCsv }[b.dataset.qd]; withBusy(b, async () => { await fn(); const m = $('qd-msg'); if (m) m.textContent = $('dl-msg').textContent; }); return; }
+    if (b.dataset.qdGo) { $(b.dataset.qdGo).scrollIntoView({ block: 'start', behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' }); return; }
+    if (b.dataset.qdBuy) { if (!state.unlocked) return needEmail(); startPurchase(); }
+  });
   function renderBuy() {
+    renderQuickDl();
     const paid = isPaid();
     $('buy').hidden = paid;
     $('full-lock').classList.toggle('open', paid);
