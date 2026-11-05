@@ -158,3 +158,116 @@ test('jämförelseexport utan dagkolumn: perioden tas bara från före "compared
   assert.equal(r.period.from, '2026-10-04');
   assert.equal(r.filtered, true);
 });
+
+/* ---------- Kontroll mot riktiga exporter (NL-kontot, nov 2026) ---------- */
+const day30 = i => `2026-10-${String(i + 1).padStart(2, '0')}`;
+
+test('nya kolumnnamn: matchningstyp, status och kampanjtillstånd känns igen', () => {
+  const k = E.readReport('k.csv', 'Search keyword,Search keyword status,Search keyword match type,Campaign,Ad group,Currency code,Clicks,Impr.,Cost,Conversions\nfotocadeau,Eligible,Phrase match,A,AG,EUR,10,100,45,0\n');
+  assert.equal(k.rows[0].matchType, 'phrase match');
+  assert.equal(k.rows[0].status, 'eligible');
+  const c = E.readReport('c.csv', 'Campaign,Campaign state,Campaign type,Day,Clicks,Impr.,Currency code,Cost,Conversions\nA,Paused,Search,2026-10-01,1,10,EUR,1,0\n');
+  assert.equal(c.rows[0].status, 'paused');
+});
+
+test('"> 90 %" läses som 90 (nedre gränsen), "< 10 %" som 5', () => {
+  assert.equal(E.num('> 90%'), 90);
+  assert.equal(E.num('< 10%'), 5);
+});
+
+test('kampanjrapport med bara värde/konv.: värdet räknas fram och kalibreras mot "Total: Account"', () => {
+  const camp = 'Campaign,Campaign type,Day,Clicks,Impr.,Currency code,Cost,Conversions,Value / conv. (by conv. time)\n'
+    + Array.from({ length: 30 }, (_, i) => `A,Search,${day30(i)},100,1000,EUR,100,5,40`).join('\n');
+  const c = E.readReport('c.csv', camp);
+  assert.equal(c.valueDerived, true);
+  assert.equal(c.rows[0].value, 200);
+  // Total: Account säger 5 400, inte 6 000: värdet skalas om
+  const terms = 'Search term,Campaign,Currency code,Clicks,Impr.,Cost,Conversions,Conv. value\nx,A,EUR,1,10,1,0,0\nTotal: Account,,EUR,3000,30000,3000,150,"5,400.00"\n';
+  const r = E.analyze([c, E.readReport('t.csv', terms)], { industry: 'shopping' });
+  assert.ok(Math.abs(r.account.roas - 1.8) < 0.001, String(r.account.roas));
+});
+
+test('hela kontot under break-even: ett kontofynd, ingen förlustlista i besparingen', () => {
+  const camp = 'Campaign,Campaign type,Day,Clicks,Impr.,Currency code,Cost,Conversions,Conv. value\n'
+    + ['Sök A', 'Sök B', 'Shopping C'].flatMap(c => Array.from({ length: 30 }, (_, i) => `${c},Search,${day30(i)},100,2000,SEK,1000,10,1500`)).join('\n');
+  const reps = [E.readReport('c.csv', camp)];
+  const low = E.analyze(reps, { industry: 'shopping', margin: 0.4 });     // ROAS 1,5 mot break-even 2,5
+  assert.ok(low.findings.some(f => f.key === 'acctUnprofit'));
+  assert.ok(!low.findings.some(f => f.key === 'unprofitCamp'));
+  assert.ok(low.findings.find(f => f.key === 'acctUnprofit').tips.length >= 3);
+  assert.ok((low.savings.high || 0) < 1000, 'förlusten räknas inte som besparing');
+  const ok = E.analyze(reps, { industry: 'shopping', margin: 0.8 });     // break-even 1,25: kontot går med vinst
+  assert.ok(!ok.findings.some(f => f.key === 'acctUnprofit'));
+});
+
+test('sökterm i flera kampanjer: negativt sökord i alla, en CSV-rad per kampanj', () => {
+  const camp = 'Campaign,Campaign type,Day,Clicks,Impr.,Currency code,Cost,Conversions\n'
+    + ['A', 'B', 'C'].flatMap(c => Array.from({ length: 30 }, (_, i) => `${c},Search,${day30(i)},100,1000,SEK,100,5`)).join('\n');
+  const terms = 'Search term,Match type,Added/Excluded,Campaign,Currency code,Clicks,Impr.,Cost,Conversions\n'
+    + 'konkurrent to go,Exact,None,A,SEK,30,300,200,0\nkonkurrent to go,Exact,None,B,SEK,30,300,200,0\nkonkurrent to go,Exact,None,C,SEK,30,300,200,0\n'
+    + 'redan utesluten,Exact,Excluded,A,SEK,90,900,900,0\nbra sökterm,Exact,None,A,SEK,500,5000,1000,60\n';
+  const r = E.analyze([E.readReport('c.csv', camp), E.readReport('t.csv', terms)], { industry: 'shopping' });
+  const n = r.negatives.find(x => x.keyword === 'konkurrent to go');
+  assert.ok(n, 'föreslås');
+  assert.deepEqual(n.campaigns.sort(), ['A', 'B', 'C']);
+  assert.equal(n.campaign, '3 kampanjer');
+  const csv = E.negativesCsv(r.negatives).split('\r\n').filter(l => l.includes('konkurrent to go'));
+  assert.equal(csv.length, 3);
+  assert.ok(!r.negatives.some(x => x.keyword === 'redan utesluten'), 'redan uteslutna söktermer föreslås inte igen');
+  const exp = r.findings.find(f => f.key === 'expensive');
+  assert.match(exp.title, /^1 sökterm har/);
+});
+
+test('sökord: matchningstyper hålls isär, pausade och borttagna räknas inte, listan sorteras på kostnad', () => {
+  const camp = 'Campaign,Campaign type,Day,Clicks,Impr.,Currency code,Cost,Conversions\n'
+    + Array.from({ length: 30 }, (_, i) => `A,Search,${day30(i)},300,3000,SEK,300,15`).join('\n');
+  const kw = 'Search keyword,Search keyword status,Search keyword match type,Campaign,Ad group,Currency code,Clicks,Impr.,Cost,Conversions\n'
+    + 'fotocadeau,Eligible,Exact match,A,AG,SEK,100,1000,900,40\n'
+    + 'fotocadeau,Eligible,Phrase match,A,AG,SEK,40,400,300,0\n'
+    + 'fotoalbum,Paused,Broad match,A,AG,SEK,0,0,0,0\n'
+    + 'fotoalbum,Eligible,Broad match,A,AG,SEK,60,600,500,0\n'
+    + 'gammalt,Paused,Broad match,A,AG,SEK,60,600,800,0\n'
+    + 'bra,Eligible,Exact match,A,AG,SEK,1000,10000,7000,410\n';
+  const r = E.analyze([E.readReport('c.csv', camp), E.readReport('k.csv', kw)], { industry: 'shopping' });
+  const pk = r.pauseKeywords.map(k => `${k.keyword}|${k.matchType}`);
+  assert.deepEqual(pk, ['fotoalbum|broad match', 'fotocadeau|phrase match']);
+  const csv = E.pauseKeywordsCsv(r.pauseKeywords);
+  assert.match(csv, /fotocadeau,Phrase/);
+  const f = r.findings.find(x => x.key === 'kwZero');
+  assert.ok(f.items.some(i => i.name.startsWith('"fotocadeau"')), 'frasmatchning visas med citattecken');
+});
+
+test('varumärkessökord bedöms mot sin egen kampanj, inte mot rent varumärke', () => {
+  const camp = 'Campaign,Campaign type,Day,Clicks,Impr.,Currency code,Cost,Conversions\n' + [
+    ...Array.from({ length: 30 }, (_, i) => `Search | Brand,Search,${day30(i)},400,1000,SEK,100,300`),
+    ...Array.from({ length: 30 }, (_, i) => `Search | Brand + Product,Search,${day30(i)},100,1000,SEK,300,100`),
+    ...Array.from({ length: 30 }, (_, i) => `Search | Generic,Search,${day30(i)},100,3000,SEK,2000,100`)
+  ].join('\n');
+  // Brand + Product kostar 3 kr per konvertering mot 0,33 kr för rent varumärke (1 kr i snitt): sökordet med 3,2 kr är normalt där
+  const kw = 'Search keyword,Search keyword status,Search keyword match type,Campaign,Ad group,Currency code,Clicks,Impr.,Cost,Conversions\n'
+    + 'butiken fotobok,Eligible,Exact match,Search | Brand + Product,AG,SEK,500,5000,1600,500\n';
+  const r = E.analyze([E.readReport('c.csv', camp), E.readReport('k.csv', kw)], { industry: 'shopping' });
+  assert.ok(!r.pauseKeywords.some(k => k.keyword === 'butiken fotobok'));
+});
+
+test('titelförslag: en sökterm med nya ord eller konkurrentens namn läggs aldrig först i titeln', () => {
+  const prods = 'Item ID,Product title,Campaign,Clicks,Impr.,Currency code,Cost,Conversions,Conv. value\n'
+    + 'agenda,Foto agenda medium | butiken - Maak een unieke fotokalender met jouw leukste foto\'s,S,200,5000,EUR,300,20,600\n'
+    + 'strip,Fotostrip - Set van 5 | butiken - je mooiste foto\'s afgedrukt in hoge kwaliteit,S,200,5000,EUR,300,20,600\n'
+    + 'poster,Foto poster formaat 20 x 30 | butiken - je mooiste foto\'s afgedrukt in hoge kwaliteit,S,200,5000,EUR,300,20,600\n'
+    // Många andra produkter, så att "foto's" inte är ett ord som finns i nästan alla titlar
+    + Array.from({ length: 30 }, (_, i) => `ovrig${i},Product number${i} model${i} variant${i},S,10,500,EUR,20,1,40`).join('\n') + '\n';
+  const terms = 'Search term,Campaign,Currency code,Clicks,Impr.,Cost,Conversions,Conv. value\n'
+    + 'fotos afdrukken hema,S,EUR,400,4000,300,40,800\nfoto agenda,S,EUR,50,500,50,5,100\n';
+  const r = E.analyze([E.readReport('p.csv', prods), E.readReport('t.csv', terms)], { industry: 'shopping' });
+  for (const t of r.titleSuggestions) assert.doesNotMatch(t.suggestion || '', /hema/i, t.suggestion);
+});
+
+test('bara produktrapport under break-even: kontofynd i stället för en lång förlustlista', () => {
+  const prods = 'Item ID,Product title,Campaign,Clicks,Impr.,Currency code,Cost,Conversions,Conv. value\n'
+    + Array.from({ length: 20 }, (_, i) => `p${i},Produkt nummer ${i} med lång titel för test,S,100,2000,SEK,1000,10,1500`).join('\n') + '\n';
+  const r = E.analyze([E.readReport('p.csv', prods)], { industry: 'shopping', margin: 0.4 });
+  assert.ok(r.findings.some(f => f.key === 'acctUnprofit'));
+  assert.ok(!r.findings.some(f => f.key === 'unprofitProd'));
+  assert.ok(r.findings.find(f => f.key === 'acctUnprofit').tips.length >= 3);
+});

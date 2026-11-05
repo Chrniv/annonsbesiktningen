@@ -97,7 +97,7 @@ test('dyra sökord: slump flaggas inte, merkostnaden krymps', () => {
   const r = run(['c.csv', CAMP], ['k.csv', kw]);
   const f = r.findings.find(x => x.key === 'kwDear');
   assert.ok(f);
-  assert.deepEqual(f.items.map(i => i.name.split(' · ')[0]), ['dyr och säker']);
+  assert.deepEqual(f.items.map(i => i.name.split(' · ')[0]), ['[dyr och säker]']);
   // Rå merkostnad 900 − 2 × 100 = 700 kr; efter krympning lägre
   const mf = 30.4 / 30;
   assert.ok(f.impact.sek < 700 * mf && f.impact.sek > 500 * mf, String(f.impact.sek));
