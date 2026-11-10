@@ -57,7 +57,7 @@ Allt där är publikt. Lägg aldrig in hemliga nycklar.
 3. Lägg länken (`https://buy.stripe.com/...`) i `VITE_STRIPE_PAYMENT_LINK`.
 4. Skapa en **restricted key** med läsrätt för *Checkout Sessions* och lägg den som `STRIPE_SECRET_KEY` i Supabase. Länkens id (`plink_...`) blir `STRIPE_PAYMENT_LINK_ID`.
 
-Utan betallänk visar sidan en knapp för att simulera betalning, så att du kan testa leveransen.
+Utan betallänk visas en knapp för att simulera betalning, men bara när sidan körs lokalt (`npm run dev`). På den publika sajten står det i stället att betalningen öppnar snart. Som admin ser du alltid hela rapporten.
 
 ## Använda
 

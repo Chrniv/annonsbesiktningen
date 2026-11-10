@@ -21,6 +21,9 @@ export function startApp() {
   const state = { files: new Map(), result: null, sample: false, unlocked: false, admin: false, preview: false, paid: false, lead: null, leads: [], leadId: null };
   const isAdmin = () => state.admin && !state.preview;
   const isPaid = () => state.paid || isAdmin();
+  // Testknappen "simulera betalning" finns bara vid lokal utveckling, aldrig på den publika sajten
+  const LOCAL_DEV = /^(localhost|127\.0\.0\.1|\[::1\])$|\.localhost$/.test(location.hostname);
+  const NO_PAY_NOTE = `Betalningen öppnar snart.${CONFIG.contactEmail ? ` Mejla ${CONFIG.contactEmail} så skickar vi hela rapporten.` : ''}`;
   const SEV = { crit: ['crit', 'Allvarligt fel'], warn: ['warn', 'Anmärkning'], info: ['info', 'Notering'] };
   const stateColor = s => s == null ? 'var(--line)' : s >= 80 ? 'var(--good)' : s >= 55 ? 'var(--warn)' : 'var(--crit)';
 
@@ -483,8 +486,8 @@ export function startApp() {
     if (paid) return;
     $('price').textContent = CONFIG.reportPrice;
     const label = state.unlocked ? `Köp hela rapporten – ${CONFIG.reportPrice}` : 'Fyll i e-post först';
-    $('buy-actions').innerHTML = `<button class="btn primary" type="button" id="buy-btn">${esc(label)}</button>${CONFIG.paymentUrl ? '' : '<button class="btn" type="button" id="buy-test">Testläge: simulera betalning</button>'}`;
-    $('buy-note').textContent = CONFIG.paymentUrl ? 'Betalning sker säkert via Stripe. Du kommer tillbaka hit med rapporten upplåst.' : 'Prototyp: ingen betallänk är inlagd ännu (CONFIG.paymentUrl). Använd testläget för att se leveransen.';
+    $('buy-actions').innerHTML = `<button class="btn primary" type="button" id="buy-btn">${esc(label)}</button>${!CONFIG.paymentUrl && LOCAL_DEV ? '<button class="btn" type="button" id="buy-test">Testläge: simulera betalning</button>' : ''}`;
+    $('buy-note').textContent = CONFIG.paymentUrl ? 'Betalning sker säkert via Stripe. Du kommer tillbaka hit med rapporten upplåst.' : LOCAL_DEV ? 'Lokal utveckling: ingen betallänk är inlagd (CONFIG.paymentUrl). Använd testläget för att se leveransen.' : NO_PAY_NOTE;
     $('buy-btn').addEventListener('click', startPurchase);
     const t = $('buy-test'); if (t) t.addEventListener('click', () => { if (!state.unlocked) return needEmail(); markPaid(); });
   }
@@ -496,7 +499,7 @@ export function startApp() {
   function startPurchase() {
     if (!state.unlocked) return needEmail();
     if (state.sample) { $('buy-note').textContent = 'Det här är exempelkontot. Ladda upp dina egna rapporter för att köpa din fullständiga rapport.'; return; }
-    if (!CONFIG.paymentUrl) { $('buy-note').textContent = 'Lägg in en Stripe-betallänk i CONFIG.paymentUrl för att ta betalt. Tills dess fungerar testläget.'; return; }
+    if (!CONFIG.paymentUrl) { $('buy-note').textContent = LOCAL_DEV ? 'Lägg in en Stripe-betallänk i CONFIG.paymentUrl för att ta betalt. Tills dess fungerar testläget.' : NO_PAY_NOTE; return; }
     // Spara resultatet i webbläsaren så att det finns kvar när kunden kommer tillbaka från betalningen
     try { localStorage.setItem('ab-pending', JSON.stringify({ result: slimResult(state.result), email: state.email || '', at: Date.now() })); } catch (e) { /* utan lagring måste filerna laddas upp igen efter betalning */ }
     const u = new URL(CONFIG.paymentUrl);
