@@ -15,6 +15,9 @@ Gratis granskning av Google Ads-konton som leadmagnet. Besökaren laddar upp exp
 ```
 index.html, integritetspolicy.html   sidorna
 src/engine.js      analysmotorn (ren logik, ingen DOM) – läser exporter och räknar fram fynd
+src/worker.js      analysen körs här, i en bakgrundstråd, så att sidan inte fryser på stora konton
+src/engineClient.js  sidans koppling till bakgrundstråden (kör på sidan om tråden inte går att starta)
+src/sanitize.js    tvättar sparade protokoll innan de visas (adminvyn och efter köp)
 src/stats.js       statistiken: risk att det är otur, säkerhet och krympning mot snittet
 src/ui.js          gränssnittet
 src/backend.js     allt som pratar med Supabase

@@ -1,5 +1,7 @@
 /* ===== Gränssnitt ===== */
-import { savingsHeadline, readReport, analyze, sampleFiles, sampleFilesEcom, num, decodeBuffer, BENCH, CONFIG, fmtKr, fmtPct, fmtRange, fmtDelta, nf0, nf2, setCurrency, matchToEditor, negativesCsv, negativesPasteList, pauseKeywordsCsv, productsCsv, titlesCsv } from './engine.js';
+import { engineClient } from './engineClient.js';
+import { sanitizeResult } from './sanitize.js';
+import { savingsHeadline, sampleFiles, sampleFilesEcom, num, BENCH, CONFIG, fmtKr, fmtPct, fmtRange, fmtDelta, nf0, nf2, setCurrency, matchToEditor, negativesCsv, negativesPasteList, pauseKeywordsCsv, productsCsv, titlesCsv } from './engine.js';
 import { backend } from './backend.js';
 
 export function startApp() {
@@ -46,13 +48,19 @@ export function startApp() {
   async function addFiles(list) {
     const files = Array.from(list); // kopiera direkt: listan töms när fältet nollställs
     for (const f of files) {
-      try {
-        const text = decodeBuffer(await f.arrayBuffer());
-        state.files.set(f.name, readReport(f.name, text));
-      } catch (e) { state.files.set(f.name, { name: f.name, type: 'unknown', error: 'Filen kunde inte läsas.' }); }
+      const old = state.files.get(f.name); if (old && old.id) engineClient.drop([old]);
+      state.files.set(f.name, { name: f.name, reading: true, size: f.size });
     }
     state.sample = false;
     renderFiles();
+    // Filerna läses i bakgrunden en i taget; listan visar "Läser ..." under tiden
+    for (const f of files) {
+      let rep;
+      try { rep = await engineClient.read(f.name, await f.arrayBuffer()); }
+      catch (e) { rep = { name: f.name, type: 'unknown', error: 'Filen kunde inte läsas.' }; }
+      if (state.files.has(f.name) && state.files.get(f.name).reading) state.files.set(f.name, rep); else if (rep.id) engineClient.drop([rep]);
+      renderFiles();
+    }
   }
   const TYPE_SV = { campaigns: 'Kampanjer', searchTerms: 'Söktermer', keywords: 'Sökord', products: 'Produkter' };
 
@@ -222,13 +230,14 @@ export function startApp() {
   function renderFiles() {
     const items = [...state.files.values()];
     $('filelist').innerHTML = items.map(r => {
+      if (r.reading) return `<li><span class="fname">${esc(r.name)}</span><span class="chip">Läser filen …</span>${r.size > 20e6 ? '<span class="small muted">Stor fil, det kan ta en stund</span>' : ''}</li>`;
       if (r.error) return `<li><span class="fname">${esc(r.name)}</span><span class="chip crit">Kan inte läsas</span><span class="small muted">${esc(r.error)}</span></li>`;
       const extra = r.missing && r.missing.length ? `<span class="small muted">Saknar: ${esc(r.missing.join(', '))}</span>` : '';
-      return `<li><span class="fname">${esc(r.name)}</span><span class="chip good">${TYPE_SV[r.type]} · ${r.rows.length} ${r.rows.length === 1 ? "rad" : "rader"}</span>${r.period ? `<span class="small muted num">${r.period.from} – ${r.period.to}</span>` : ''}${extra}<button class="btn" style="padding:2px 8px;margin-left:auto;font-size:12.5px" data-rm="${esc(r.name)}" aria-label="Ta bort ${esc(r.name)}">Ta bort</button></li>`;
+      return `<li><span class="fname">${esc(r.name)}</span><span class="chip good">${TYPE_SV[r.type]} · ${nf0.format(r.rowCount)} ${r.rowCount === 1 ? 'rad' : 'rader'}</span>${r.period ? `<span class="small muted num">${r.period.from} – ${r.period.to}</span>` : ''}${extra}<button class="btn" style="padding:2px 8px;margin-left:auto;font-size:12.5px" data-rm="${esc(r.name)}" aria-label="Ta bort ${esc(r.name)}">Ta bort</button></li>`;
     }).join('');
-    $('filelist').querySelectorAll('[data-rm]').forEach(b => b.addEventListener('click', () => { state.files.delete(b.dataset.rm); renderFiles(); }));
-    const ok = items.filter(r => !r.error);
-    $('run').disabled = !ok.length;
+    $('filelist').querySelectorAll('[data-rm]').forEach(b => b.addEventListener('click', () => { const r = state.files.get(b.dataset.rm); if (r && r.id) engineClient.drop([r]); state.files.delete(b.dataset.rm); renderFiles(); }));
+    const ok = items.filter(r => !r.error && !r.reading);
+    $('run').disabled = !ok.length || items.some(r => r.reading) || state.busy;
     renderChecklist();
     const err = $('intake-error');
     const hasCamp = ok.some(r => r.type === 'campaigns');
@@ -241,7 +250,7 @@ export function startApp() {
     if (cur && !CONFIG.fxToSek[String(cur.currency).toUpperCase()]) { err.hidden = false; err.textContent = `Kontot rapporterar i ${cur.currency}. Kostnad per klick och per konvertering kan inte jämföras med branschen i den valutan.`; }
   }
 
-  $('run').addEventListener('click', () => run([...state.files.values()].filter(r => !r.error), false));
+  $('run').addEventListener('click', () => run([...state.files.values()].filter(r => !r.error && !r.reading), false));
   $('sample').addEventListener('click', () => loadSample(true));
 
   function loadSample(scroll) {
@@ -251,7 +260,9 @@ export function startApp() {
     state.sampleKind = ecom ? 'ecom' : 'leads';
     if (!state.profile || !state.profile.industry) $('industry').value = ecom ? 'shopping' : 'home';
     else if (!ecom && !state.profile.done) $('industry').value = 'home';
-    run((ecom ? sampleFilesEcom(end) : sampleFiles(end)).map(f => readReport(f.name, f.text)), true, scroll);
+    const files = ecom ? sampleFilesEcom(end) : sampleFiles(end);
+    const seq0 = state.viewSeq || 0;
+    Promise.all(files.map(f => engineClient.read(f.name, f.text))).then(reps => { if ((state.viewSeq || 0) === seq0) run(reps, true, scroll); else engineClient.drop(reps); });
   }
 
   ['margin-sel', 'margin-sel2'].forEach(id => $(id).addEventListener('change', () => {
@@ -259,10 +270,23 @@ export function startApp() {
     $('margin-sel').value = $('margin-sel2').value = state.profile.margin || '';
     if (state.lastReports) run(state.lastReports, state.sample, false);
   }));
-  function run(reports, sample, scroll = true) {
+  async function run(reports, sample, scroll = true) {
+    if (state.busy) return;
+    const opts = { industry: $('industry').value, margin: state.profile.margin ? Number(state.profile.margin) : null, brandName: state.profile.brandName || '' };
+    const btn = $('run'), btnText = btn.textContent, rows = reports.reduce((s, r) => s + (r.rowCount || 0), 0);
+    state.busy = true; btn.disabled = true; btn.textContent = 'Besiktar …';
+    const note = $('run-note'); note.hidden = rows < 50000; note.textContent = `Räknar på ${nf0.format(rows)} rader. Det kan ta en stund, sidan fungerar under tiden.`;
+    let res;
+    const seq = state.viewSeq = (state.viewSeq || 0) + 1;
+    try { res = await engineClient.analyze(reports, opts); }
+    catch (e) { const err = $('intake-error'); err.hidden = false; err.textContent = 'Analysen kunde inte köras. Ladda upp filerna igen och försök på nytt.'; return; }
+    finally { state.busy = false; btn.textContent = btnText; note.hidden = true; btn.disabled = ![...state.files.values()].some(r => !r.error && !r.reading); }
+    // Har något annat visats under tiden (ett köpt protokoll, en lead i adminvyn) ska det inte skrivas över
+    if (state.viewSeq !== seq) return;
+    // Analysen körs i en bakgrundstråd: valutan för beloppen på sidan sätts här
+    setCurrency(res.currency || 'SEK');
     state.lastReports = reports;
     state.sample = sample; state.unlocked = !!state.paidPending; state.paid = !!state.paidPending && !sample; state.lead = null; $('lead-note').hidden = true; markActiveLead();
-    const res = analyze(reports, { industry: $('industry').value, margin: state.profile.margin ? Number(state.profile.margin) : null, brandName: state.profile.brandName || '' });
     state.result = res;
     render(res);
     if (scroll) ($('example-note').hidden ? $('result') : $('example-note')).scrollIntoView({ behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth', block: 'start' });
@@ -284,7 +308,7 @@ export function startApp() {
       ['Bransch', r.industry],
       ['Kostnad per månad', fmtKr(r.spendMonthly)]
     ].map(([k, v]) => `<div><span class="label">${k}</span><span class="v">${esc(v)}</span></div>`).join('');
-    $('score').innerHTML = r.overall == null ? '–' : `${r.overall}<small>/100</small>`;
+    $('score').innerHTML = r.overall == null ? '–' : `${esc(Math.round(Number(r.overall)) || 0)}<small>/100</small>`;
     const st = $('stamp');
     st.className = 'stamp ' + (r.verdict ? r.verdict.key : '');
     const dq = r.dataQuality || { level: 'ok' };
@@ -307,7 +331,7 @@ export function startApp() {
       <div><span class="label">Uppskattat slöseri</span><span class="big">${r.modules.waste.available ? fmtKr(r.wasteMonthly) : '–'}</span><span class="small muted">${r.modules.waste.available ? `per månad, ${Math.round(r.modules.waste.pct * 100)} % av kostnaden` : 'Ladda upp söktermer för att räkna ut'}</span></div>
       <div><span class="label">Möjlig besparing</span><span class="big">${S.high ? fmtRange(S.low, S.high) : '–'}</span><span class="small muted">${S.high ? `per månad, ${S.ci ? Math.round(S.ci.level * 100) + ' % säkert intervall' : 'om åtgärderna genomförs'}${S.convHigh ? `, eller ≈ ${Math.round(S.convLow)}–${Math.round(S.convHigh)} fler konverteringar` : ''}` : 'Inga tydliga besparingar hittades'}</span></div>
       <div><span class="label">Missade konverteringar</span><span class="big num">${r.missedConvMonthly ? '≈ ' + Math.round(r.missedConvMonthly) : '–'}</span><span class="small muted">${r.missedConvMonthly ? 'per månad när lönsamma kampanjer når budgettaket' : pace.available ? 'Inga lönsamma kampanjer stoppas av budget' : 'Kräver budgetkolumn'}</span></div>
-      <div><span class="label">Fynd</span><div class="counts">${r.counts.crit ? `<span class="chip crit">${r.counts.crit} ${r.counts.crit === 1 ? 'allvarligt' : 'allvarliga'}</span>` : ''}${r.counts.warn ? `<span class="chip warn">${r.counts.warn} ${r.counts.warn === 1 ? 'anmärkning' : 'anmärkningar'}</span>` : ''}${r.counts.info ? `<span class="chip info">${r.counts.info} ${r.counts.info === 1 ? 'notering' : 'noteringar'}</span>` : ''}${!r.findings.length ? '<span class="chip good">Inga fel hittade</span>' : ''}</div></div>`;
+      <div><span class="label">Fynd</span><div class="counts">${r.counts.crit ? `<span class="chip crit">${esc(Number(r.counts.crit) || 0)} ${r.counts.crit === 1 ? 'allvarligt' : 'allvarliga'}</span>` : ''}${r.counts.warn ? `<span class="chip warn">${esc(Number(r.counts.warn) || 0)} ${r.counts.warn === 1 ? 'anmärkning' : 'anmärkningar'}</span>` : ''}${r.counts.info ? `<span class="chip info">${esc(Number(r.counts.info) || 0)} ${r.counts.info === 1 ? 'notering' : 'noteringar'}</span>` : ''}${!r.findings.length ? '<span class="chip good">Inga fel hittade</span>' : ''}</div></div>`;
 
     const M = r.modules;
     const modLine = {
@@ -323,8 +347,8 @@ export function startApp() {
       wow: 'Kräver kampanjrapport per dag eller vecka, minst 14 dagar.'
     };
     $('modules').innerHTML = Object.values(M).map(m => m.available && m.score != null
-      ? `<div class="mod" style="--state:${stateColor(m.score)}"><div class="mod-head"><h3>${m.name}</h3><span class="s">${m.score}</span></div><div class="meter"><b style="width:${m.score}%"></b></div><p class="small">${esc(modLine[m.id]())}</p></div>`
-      : `<div class="mod locked"><div class="mod-head"><h3>${m.name}</h3><span class="label">Låst</span></div><p class="small">${lockWhy[m.id]}</p></div>`).join('');
+      ? `<div class="mod" style="--state:${stateColor(m.score)}"><div class="mod-head"><h3>${esc(m.name)}</h3><span class="s">${esc(Number(m.score) || 0)}</span></div><div class="meter"><b style="width:${esc(Number(m.score) || 0)}%"></b></div><p class="small">${esc(modLine[m.id]())}</p></div>`
+      : `<div class="mod locked"><div class="mod-head"><h3>${esc(m.name)}</h3><span class="label">Låst</span></div><p class="small">${lockWhy[m.id]}</p></div>`).join('');
 
     // Branschjämförelse
     const bm = M.performance.benchmark;
@@ -420,7 +444,7 @@ export function startApp() {
     const impactTxt = f => f.saving ? `Möjlig besparing ${fmtRange(f.saving.low, f.saving.high)}/mån` : !f.impact ? '' : f.impact.kind === 'waste' ? `≈ ${fmtKr(f.impact.sek)}/mån i slöseri` : f.impact.kind === 'opportunity' ? `≈ ${Math.round(f.impact.conv)} missade konv./mån` : f.impact.sek ? `≈ ${fmtKr(f.impact.sek)}/mån feldisponerat` : '';
     $('top').innerHTML = top.length ? top.map((f, i) => `<div class="find"><div class="find-head"><span class="label num">Fynd ${i + 1}</span><span class="chip ${SEV[f.sev][0]}">${SEV[f.sev][1]}</span></div><h3>${esc(f.title)}</h3><p class="small">${esc(f.freeText)}</p>${impactTxt(f) ? `<span class="impact">${impactTxt(f)}</span>` : ''}${revealCount(f) && f.items.length ? `<ul class="examples">${f.items.slice(0, revealCount(f)).map(it => `<li><span class="name">${esc(it.name)}</span><span class="v">${esc(it.value)}</span></li>`).join('')}</ul>${f.items.length > revealCount(f) ? `<span class="masked-note">+ ${f.items.length - revealCount(f)} till i hela rapporten</span>` : ''}` : ''}</div>`).join('') : '<p>Inga allvarliga fel eller anmärkningar hittades.</p>';
     const P = r.modules.pacing;
-    $('pace-sum').innerHTML = P.available && P.projected != null ? `<div class="find"><div class="find-head"><span class="label">Budgettakt</span><span class="chip ${P.verdict === 'ontrack' ? 'good' : 'warn'}">${{ over: 'Överskrider', under: 'Underförbrukar', ontrack: 'I fas' }[P.verdict]}</span></div><p class="small">${P.month ? `Med nuvarande takt landar ${P.month} på ${fmtKr(P.projected)} mot en budget på ${fmtKr(P.monthBudget)} (${Math.round(P.ratio * 100)} %). ${P.daysLeft} dagar kvar.` : `Nuvarande takt motsvarar ${fmtKr(P.projected)} per månad mot en budget på ${fmtKr(P.monthBudget)}.`}</p></div>` : '';
+    $('pace-sum').innerHTML = P.available && P.projected != null ? `<div class="find"><div class="find-head"><span class="label">Budgettakt</span><span class="chip ${P.verdict === 'ontrack' ? 'good' : 'warn'}">${{ over: 'Överskrider', under: 'Underförbrukar', ontrack: 'I fas' }[P.verdict]}</span></div><p class="small">${P.month ? `Med nuvarande takt landar ${esc(P.month)} på ${fmtKr(P.projected)} mot en budget på ${fmtKr(P.monthBudget)} (${Math.round(P.ratio * 100)} %). ${esc(P.daysLeft)} dagar kvar.` : `Nuvarande takt motsvarar ${fmtKr(P.projected)} per månad mot en budget på ${fmtKr(P.monthBudget)}.`}</p></div>` : '';
     const W = r.modules.wow;
     if (W.available) {
       const band = W.mode === 'band';
@@ -430,7 +454,7 @@ export function startApp() {
         const cls = band ? (c.outside && dir ? `${dir} out` : '') : (Math.abs(c.delta || 0) >= 5 ? dir : '');
         const f = wowFmt(c.k);
         const refCell = band && c.lo != null ? `${f(c.ref)}<span class="range">${f(c.lo)} – ${f(c.hi)}</span>` : f(c.ref);
-        return `<tr><td>${c.sv}</td><td class="n">${refCell}</td><td class="n">${f(c.cur)}</td><td class="n ${cls}">${fmtDelta(c.delta)}</td></tr>`;
+        return `<tr><td>${esc(c.sv)}</td><td class="n">${refCell}</td><td class="n">${f(c.cur)}</td><td class="n ${cls}">${fmtDelta(c.delta)}</td></tr>`;
       }).join('');
       $('wow-sum').innerHTML = `<div class="find"><div class="find-head"><span class="label">Vecka mot vecka</span><span class="small muted num">${esc(W.curLabel)} mot ${esc(W.prevLabel)}</span></div><div class="bench-wrap"><table class="wow"><thead><tr><th>Mått</th><th>${esc(W.refLabel || 'Veckan innan')}</th><th>Senaste 7 dagar</th><th>Förändring</th></tr></thead><tbody>${rows}</tbody></table></div>${W.notes ? `<p class="note">${esc(W.notes.join(' '))}</p>` : ''}${isPaid() ? '' : '<p class="note">Vilka kampanjer som drev förändringen finns i hela rapporten.</p>'}</div>`;
     } else $('wow-sum').innerHTML = '';
@@ -530,7 +554,7 @@ export function startApp() {
         : `Vi kunde inte bekräfta betalningen. Har du betalat? Mejla ${CONFIG.contactEmail || 'oss'} så skickar vi rapporten.`);
       return;
     }
-    const result = v.result || (pending && pending.result);
+    const result = sanitizeResult(v.result || (pending && pending.result) || null);
     try { history.replaceState(null, '', location.pathname + location.hash); } catch (e) { /* ok */ }
     if (!result) {
       show('Tack för köpet! Betalningen är bekräftad, men vi hittade inte din granskning. Ladda upp filerna igen så låses hela rapporten upp.');
@@ -538,6 +562,7 @@ export function startApp() {
       return;
     }
     note.hidden = true;
+    state.viewSeq = (state.viewSeq || 0) + 1;
     setCurrency(result.currency || 'SEK');
     state.result = result; state.email = v.email || (pending && pending.email) || ''; state.leadId = v.leadId || null;
     state.unlocked = true; state.sample = false; state.paid = true;
@@ -698,7 +723,7 @@ export function startApp() {
     { const hd = savingsHeadline(S, !!dqPdf); if (hd) { y += 2; text(hd.lead, 11.5, { bold: true, color: C.good }); text(hd.sub, 9, { color: C.muted }); y += 2; } }
     if (dqPdf) { y += 2; text(dqPdf.title, 10.5, { bold: true, color: dqPdf.level === 'verylow' ? C.crit : C.warn }); text(`${dqPdf.text} ${dqPdf.advice}`, 9.5, { color: C.muted }); y += 3; }
     // Nyckeltal
-    const figs = [['Uppskattat slöseri', M.waste.available ? fmtKr(r.wasteMonthly) : '–', 'per månad'], ['Möjlig besparing', S.high ? fmtRange(S.low, S.high) : '–', S.ci ? 'per månad, 90 % säkert' : 'per månad'], ['Missade konverteringar', r.missedConvMonthly ? 'ca ' + Math.round(r.missedConvMonthly) : '–', 'per månad'], ['Fynd', String(r.findings.length), `${r.counts.crit} allvarliga, ${r.counts.warn} anmärkningar`]];
+    const figs = [['Uppskattat slöseri', M.waste.available ? fmtKr(r.wasteMonthly) : '–', 'per månad'], ['Möjlig besparing', S.high ? fmtRange(S.low, S.high) : '–', S.ci ? 'per månad, 90 % säkert' : 'per månad'], ['Missade konverteringar', r.missedConvMonthly ? 'ca ' + Math.round(r.missedConvMonthly) : '–', 'per månad'], ['Fynd', String(r.findings.length), `${esc(Number(r.counts.crit) || 0)} allvarliga, ${esc(Number(r.counts.warn) || 0)} anmärkningar`]];
     const bw = (CW - 9) / 4; need(26);
     figs.forEach((f, i) => { const x = L + i * (bw + 3); doc.setFillColor(...C.soft); doc.roundedRect(x, y, bw, 22, 2.5, 2.5, 'F');
       doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); color(C.muted); doc.text(T(f[0]), x + 3.5, y + 5.5);
@@ -731,7 +756,7 @@ export function startApp() {
     if (tsg.length) { h2(`Optimerade produkttitlar (${tsg.length} st)`); text('Ladda upp CSV-filen som tilläggsflöde i Merchant Center (id, title). Granska förslagen först.', 9, { color: C.muted }); y += 1; table(['Artikel-id', 'Nuvarande titel', 'Förslag'], tsg.map(t => [t.itemId, t.title, t.suggestion]), { 0: { cellWidth: 28 }, 1: { textColor: C.muted } }); }
     if (px.length) { h2(`Produkter att utesluta (${px.length} st)`); table(['Artikel-id', 'Produkt', 'Skäl', 'Säkerhet', 'Kostnad/mån'], px.map(p => [p.itemId, p.title || '–', p.why, confShort(p.confidence), fmtKr(p.costMonthly)]), { 4: { halign: 'right' } }); }
     const P = M.pacing;
-    if (P.available && P.projected != null) { h2('Budgettakt'); text(P.month ? `Med nuvarande takt landar ${P.month} på ${fmtKr(P.projected)} mot en budget på ${fmtKr(P.monthBudget)} (${Math.round(P.ratio * 100)} %).` : `Nuvarande takt motsvarar ${fmtKr(P.projected)} per månad mot en budget på ${fmtKr(P.monthBudget)}.`, 9.5); }
+    if (P.available && P.projected != null) { h2('Budgettakt'); text(P.month ? `Med nuvarande takt landar ${esc(P.month)} på ${fmtKr(P.projected)} mot en budget på ${fmtKr(P.monthBudget)} (${Math.round(P.ratio * 100)} %).` : `Nuvarande takt motsvarar ${fmtKr(P.projected)} per månad mot en budget på ${fmtKr(P.monthBudget)}.`, 9.5); }
     const Wk = M.wow;
     if (Wk.available) { h2('Vecka mot vecka'); text(`${Wk.curLabel} mot ${Wk.prevLabel}`, 8.5, { color: C.muted }); y += 1;
       table(['Mått', Wk.refLabel || 'Veckan innan', 'Senaste 7 dagar', 'Förändring'], Wk.changes.filter(c => c.cur != null).map(c => [c.sv, wowRef(Wk, c), wowFmt(c.k)(c.cur), fmtDelta(c.delta) + (c.outside ? ' (utanför)' : '')]), { 1: { halign: 'right' }, 2: { halign: 'right' }, 3: { halign: 'right' } });
@@ -765,7 +790,7 @@ export function startApp() {
     const M = r.modules, bm = M.performance.benchmark.metrics;
     const benchRows = [['ctr', 'Klickfrekvens (CTR)', fmtPct], ['cvr', 'Konverteringsgrad', fmtPct], ['cpc', 'Kostnad per klick', fmtKr], ['cpa', 'Kostnad per konvertering', fmtKr]]
       .map(([k, l, f]) => `<tr><td>${l}</td><td>${f(bm[k].you)}</td><td>${bm[k].verdict === 'nocur' ? nf2.format(bm[k].bench) + ' USD' : f(bm[k].bench)}</td></tr>`).join('');
-    const finds = r.findings.map((f, i) => `<section class="f ${f.sev}"><p class="sev">${i + 1}. ${sevTxt[f.sev]}</p><h3>${e(f.title)}</h3><p>${e(f.freeText)}</p><p class="muted">${e(f.detail)}</p>${f.items.length ? `<div class="coll${f.items.length > LIST_LIMIT ? ' collapsed' : ''}"><table><tbody>${f.items.map((it, j) => `<tr${j >= LIST_LIMIT ? ' class="more"' : ''}><td>${e(it.name)}</td><td class="r">${e(it.value)}</td></tr>`).join('')}</tbody></table>${f.items.length > LIST_LIMIT ? toggleBtn(f.items.length) : ''}</div>` : ''}${f.saving ? `<p class="sav">Möjlig besparing: ${fmtRange(f.saving.low, f.saving.high)} per månad</p>` : ''}${(f.tips || []).length ? `<h4>Så åtgärdar du det</h4><ol>${f.tips.map(t => `<li>${e(t)}</li>`).join('')}</ol>` : ''}</section>`).join('');
+    const finds = r.findings.map((f, i) => `<section class="f ${SEV[f.sev] ? f.sev : 'info'}"><p class="sev">${i + 1}. ${sevTxt[f.sev]}</p><h3>${e(f.title)}</h3><p>${e(f.freeText)}</p><p class="muted">${e(f.detail)}</p>${f.items.length ? `<div class="coll${f.items.length > LIST_LIMIT ? ' collapsed' : ''}"><table><tbody>${f.items.map((it, j) => `<tr${j >= LIST_LIMIT ? ' class="more"' : ''}><td>${e(it.name)}</td><td class="r">${e(it.value)}</td></tr>`).join('')}</tbody></table>${f.items.length > LIST_LIMIT ? toggleBtn(f.items.length) : ''}</div>` : ''}${f.saving ? `<p class="sav">Möjlig besparing: ${fmtRange(f.saving.low, f.saving.high)} per månad</p>` : ''}${(f.tips || []).length ? `<h4>Så åtgärdar du det</h4><ol>${f.tips.map(t => `<li>${e(t)}</li>`).join('')}</ol>` : ''}</section>`).join('');
     const negs = (r.negatives || []);
     const negTable = negs.length ? `<h2>Negativa sökord (${negs.length} st)</h2><p>Ladda upp CSV-filen i Google Ads Editor (Konto › Importera › Från fil) eller klistra in listan i en delad lista med negativa sökord. Granska listan innan du laddar upp. ${e(CONF_NOTE)}</p><div class="coll${negs.length > LIST_LIMIT ? ' collapsed' : ''}"><table><thead><tr><th>Sökord</th><th>Matchning</th><th>Kampanj</th><th>Skäl</th><th>Säkerhet</th><th class="r">Kostnad/mån</th></tr></thead><tbody>${negs.map((n, j) => `<tr${j >= LIST_LIMIT ? ' class="more"' : ''}><td class="m">${e(n.match === 'exact' ? '[' + n.keyword + ']' : '"' + n.keyword + '"')}</td><td>${n.match === 'exact' ? 'Exakt' : 'Fras'}</td><td>${e(campList(n))}</td><td>${e(n.reason)}</td><td>${e(confText(n.confidence, n.risk))}</td><td class="r">${fmtKr(n.costMonthly)}</td></tr>`).join('')}</tbody></table>${negs.length > LIST_LIMIT ? toggleBtn(negs.length) : ''}</div>` : '';
     const pk = r.pauseKeywords || [], px = r.productExclusions || [];
@@ -773,9 +798,9 @@ export function startApp() {
     const pauseT = pk.length ? `<h2>Sökord att pausa (${pk.length} st)</h2><p>Importera CSV-filen i Google Ads Editor. Säsongssökord är undantagna.</p>${collT('<th>Sökord</th><th>Kampanj</th><th>Annonsgrupp</th><th>Skäl</th><th>Säkerhet</th><th class="r">Kostnad/mån</th>', pk.map(k => `<tr><td class="m">${e(k.keyword)}</td><td>${e(k.campaign)}</td><td>${e(k.adGroup || '–')}</td><td>${e(k.why)}</td><td>${e(confText(k.confidence, k.risk))}</td><td class="r">${fmtKr(k.costMonthly)}</td></tr>`))}` : '';
     const prodT = px.length ? `<h2>Produkter att utesluta (${px.length} st)</h2><p>Ladda upp CSV-filen som tilläggsflöde i Merchant Center (${e(CONFIG.productLabel.column)} = "${e(CONFIG.productLabel.value)}") och uteslut etiketten i kampanjen.</p>${collT('<th>Artikel-id</th><th>Produkt</th><th>Skäl</th><th>Säkerhet</th><th class="r">Kostnad/mån</th>', px.map(p => `<tr><td class="m">${e(p.itemId)}</td><td>${e(p.title || '–')}</td><td>${e(p.why)}</td><td>${e(confText(p.confidence, p.risk))}</td><td class="r">${fmtKr(p.costMonthly)}</td></tr>`))}` : '';
     const W = M.wow;
-    const wow = W.available ? `<h2>Vecka mot vecka</h2><p class="muted">${e(W.curLabel)} mot ${e(W.prevLabel)}</p><table><thead><tr><th>Mått</th><th class="r">${e(W.refLabel || 'Veckan innan')}</th><th class="r">Senaste 7 dagar</th><th class="r">Förändring</th></tr></thead><tbody>${W.changes.filter(c => c.cur != null).map(c => `<tr><td>${c.sv}</td><td class="r">${e(wowRef(W, c))}</td><td class="r">${wowFmt(c.k)(c.cur)}</td><td class="r"${c.outside ? ' style="font-weight:600"' : ''}>${fmtDelta(c.delta)}${c.outside ? ' utanför' : ''}</td></tr>`).join('')}</tbody></table>${(W.notes || []).length ? `<p class="muted">${e(W.notes.join(' '))}</p>` : ''}` : '';
+    const wow = W.available ? `<h2>Vecka mot vecka</h2><p class="muted">${e(W.curLabel)} mot ${e(W.prevLabel)}</p><table><thead><tr><th>Mått</th><th class="r">${e(W.refLabel || 'Veckan innan')}</th><th class="r">Senaste 7 dagar</th><th class="r">Förändring</th></tr></thead><tbody>${W.changes.filter(c => c.cur != null).map(c => `<tr><td>${esc(c.sv)}</td><td class="r">${e(wowRef(W, c))}</td><td class="r">${wowFmt(c.k)(c.cur)}</td><td class="r"${c.outside ? ' style="font-weight:600"' : ''}>${fmtDelta(c.delta)}${c.outside ? ' utanför' : ''}</td></tr>`).join('')}</tbody></table>${(W.notes || []).length ? `<p class="muted">${e(W.notes.join(' '))}</p>` : ''}` : '';
     const P = M.pacing;
-    const pace = P.available && P.projected != null ? `<h2>Budgettakt</h2><p>${P.month ? `Med nuvarande takt landar ${P.month} på ${fmtKr(P.projected)} mot en budget på ${fmtKr(P.monthBudget)} (${Math.round(P.ratio * 100)} %).` : `Nuvarande takt motsvarar ${fmtKr(P.projected)} per månad mot en budget på ${fmtKr(P.monthBudget)}.`}</p>` : '';
+    const pace = P.available && P.projected != null ? `<h2>Budgettakt</h2><p>${P.month ? `Med nuvarande takt landar ${esc(P.month)} på ${fmtKr(P.projected)} mot en budget på ${fmtKr(P.monthBudget)} (${Math.round(P.ratio * 100)} %).` : `Nuvarande takt motsvarar ${fmtKr(P.projected)} per månad mot en budget på ${fmtKr(P.monthBudget)}.`}</p>` : '';
     return `<!doctype html><html lang="sv"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@300..700&family=JetBrains+Mono&display=swap"><title>Annonsbesiktning ${e(r.period.to || stamp())}</title><style>
 body{font:15px/1.6 'Instrument Sans','Helvetica Neue',-apple-system,'Segoe UI',Arial,sans-serif;color:#1C2321;background:#fff;max-width:820px;margin:0 auto;padding:40px 24px}
 h1{font-size:40px;font-weight:600;letter-spacing:-.035em;margin:0 0 8px}h2{font-size:20px;font-weight:600;letter-spacing:-.02em;margin:40px 0 12px;padding-bottom:8px;border-bottom:1px solid #E2E7E4}h3{font-size:16px;font-weight:600;margin:6px 0}h4{margin:14px 0 6px;font-size:13px;font-weight:600;color:#2E5E50}
@@ -791,10 +816,10 @@ table{width:100%;border-collapse:collapse;margin:10px 0;font-size:14px}td,th{bor
 <h1>Annonsbesiktningen</h1>
 <div class="meta"><span>Period: ${e(r.period.from ? r.period.from + ' – ' + r.period.to : 'okänd')}</span><span>Bransch: ${e(r.industry)}</span><span>Kostnad per månad: ${fmtKr(r.spendMonthly)}</span><span>Skapad: ${stamp()}</span></div>
 <button class="print" onclick="window.print()">Skriv ut eller spara som PDF</button>
-<p class="score">${r.overall == null ? '–' : r.overall}<span style="font-size:20px;color:#687270;letter-spacing:0">/100</span></p>
+<p class="score">${r.overall == null ? '–' : esc(Math.round(Number(r.overall)) || 0)}<span style="font-size:20px;color:#687270;letter-spacing:0">/100</span></p>
 <p class="verdict">${e(r.verdict ? r.verdict.label : '')}${dqOk ? '' : ' · preliminärt'}</p><p>${e(r.verdict ? r.verdict.text : '')}</p>${(() => { const hd = savingsHeadline(r.savings, !dqOk); return hd ? `<p style="font-size:18px;font-weight:600;margin:18px 0 2px">${e(hd.lead)}</p><p class="muted">${e(hd.sub)}</p>` : ''; })()}
 ${dqOk ? '' : `<div style="margin:18px 0;padding:14px 16px;border-left:3px solid ${r.dataQuality.level === 'verylow' ? '#B4442E' : '#B07A12'};background:#F7F3EA;border-radius:8px"><b>${e(r.dataQuality.title)}</b><p style="margin:6px 0 0">${e(r.dataQuality.text)} ${e(r.dataQuality.advice)}</p></div>`}
-<div class="figs"><div>Uppskattat slöseri<b>${M.waste.available ? fmtKr(r.wasteMonthly) : '–'}</b>per månad</div><div>Möjlig besparing<b>${(r.savings || {}).high ? fmtRange(r.savings.low, r.savings.high) : '–'}</b>per månad</div><div>Missade konverteringar<b>${r.missedConvMonthly ? '≈ ' + Math.round(r.missedConvMonthly) : '–'}</b>per månad</div><div>Fynd<b>${r.findings.length}</b>${r.counts.crit} allvarliga, ${r.counts.warn} anmärkningar</div></div>
+<div class="figs"><div>Uppskattat slöseri<b>${M.waste.available ? fmtKr(r.wasteMonthly) : '–'}</b>per månad</div><div>Möjlig besparing<b>${(r.savings || {}).high ? fmtRange(r.savings.low, r.savings.high) : '–'}</b>per månad</div><div>Missade konverteringar<b>${r.missedConvMonthly ? '≈ ' + Math.round(r.missedConvMonthly) : '–'}</b>per månad</div><div>Fynd<b>${r.findings.length}</b>${esc(Number(r.counts.crit) || 0)} allvarliga, ${esc(Number(r.counts.warn) || 0)} anmärkningar</div></div>
 ${(r.narrative || []).length ? `<h2>Analys</h2>${r.narrative.map(p => `<h3>${e(p.h)}</h3><p>${e(p.t)}</p>`).join('')}` : ''}
 <h2>Du mot branschen</h2><p class="muted">${e(M.performance.benchmark.industry)}, ${e(M.performance.benchmark.scope)}</p><table><thead><tr><th>Mått</th><th>Ditt konto</th><th>Branschsnitt</th></tr></thead><tbody>${benchRows}</tbody></table>
 <h2>Fynd och åtgärder</h2>${finds || '<p>Inga fynd.</p>'}
@@ -826,8 +851,11 @@ ${negTable}${pauseT}${prodT}${pace}${wow}
   });
 
   function openLead(lead) {
+    // Protokollet kommer från en besökares webbläsare: tvätta det innan det visas
+    if (lead && lead.result) lead = { ...lead, result: sanitizeResult(lead.result) };
     if (!lead || !lead.result || !lead.result.modules) throw new Error('bad');
     state.lead = lead; state.sample = false; state.unlocked = false;
+    state.viewSeq = (state.viewSeq || 0) + 1;
     setCurrency(lead.result.currency || 'SEK');
     state.result = lead.result;
     render(lead.result);
@@ -851,7 +879,7 @@ ${negTable}${pauseT}${prodT}${pace}${wow}
     $('leads-source').textContent = 'Leads från alla besökare, nyast först. Leads raderas automatiskt efter ' + CONFIG.leadRetentionMonths + ' månader.';
     $('leads-body').innerHTML = state.leads.map(l => {
       const a = l.audit || {}, p = l.profile || {};
-      return `<tr data-id="${esc(l.id)}"><td class="n">${esc((l.created_at || '').slice(0, 10))}</td><td>${esc(l.company || '–')}<div class="small muted">${esc(l.website || '')}</div>${p.industryText ? `<div class="small muted">Annan bransch: ${esc(p.industryText)}</div>` : ''}</td><td>${esc(p.budget ? (Q.budget.find(o => o.v === p.budget) || {}).t || '' : '–')}</td><td>${esc(l.email || '')}</td><td class="n">${a.score == null ? '–' : esc(a.score)}</td><td class="n">${a.spendMonthly != null ? esc(nf0.format(a.spendMonthly)) : '–'}</td><td class="n">${a.wasteMonthly != null ? esc(nf0.format(a.wasteMonthly)) : '–'}</td><td class="n">${a.findings ? a.findings.length : '–'}</td><td>${l.paid ? '<span class="chip good">Köpt</span>' : ''}</td><td><button class="btn" type="button" data-open="${esc(l.id)}">Öppna</button></td></tr>`;
+      return `<tr data-id="${esc(l.id)}"><td class="n">${esc((l.created_at || '').slice(0, 10))}</td><td>${esc(l.company || '–')}<div class="small muted">${esc(l.website || '')}</div>${p.industryText ? `<div class="small muted">Annan bransch: ${esc(p.industryText)}</div>` : ''}</td><td>${esc(p.budget ? (Q.budget.find(o => o.v === p.budget) || {}).t || '' : '–')}</td><td>${esc(l.email || '')}</td><td class="n">${a.score == null ? '–' : esc(a.score)}</td><td class="n">${a.spendMonthly != null ? esc(nf0.format(a.spendMonthly)) : '–'}</td><td class="n">${a.wasteMonthly != null ? esc(nf0.format(a.wasteMonthly)) : '–'}</td><td class="n">${Array.isArray(a.findings) ? a.findings.length : '–'}</td><td>${l.paid ? '<span class="chip good">Köpt</span>' : ''}</td><td><button class="btn" type="button" data-open="${esc(l.id)}">Öppna</button></td></tr>`;
     }).join('');
     $('leads-body').querySelectorAll('[data-open]').forEach(btn => btn.addEventListener('click', async () => {
       const l = state.leads.find(x => x.id === btn.dataset.open);

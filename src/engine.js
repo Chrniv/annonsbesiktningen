@@ -63,7 +63,7 @@ function decodeBuffer(buf) {
 }
 
 function detectDelimiter(text) {
-  const lines = text.split(/\r?\n/).slice(0, 40).filter(l => l.trim());
+  const lines = text.slice(0, 200000).split(/\r?\n/).slice(0, 40).filter(l => l.trim());
   let best = ',', bestScore = -1;
   for (const d of ['\t', ';', ',']) {
     const counts = {};
@@ -78,20 +78,39 @@ function detectDelimiter(text) {
 }
 
 function parseCSV(text, d) {
-  const rows = []; let row = [], f = '', q = false;
-  for (let i = 0; i < text.length; i++) {
-    const c = text[i];
-    if (q) {
-      if (c === '"') { if (text[i + 1] === '"') { f += '"'; i++; } else q = false; }
-      else f += c;
-    } else if (c === '"') q = true;
-    else if (c === d) { row.push(f); f = ''; }
-    else if (c === '\n' || c === '\r') {
-      if (c === '\r' && text[i + 1] === '\n') i++;
-      row.push(f); rows.push(row); row = []; f = '';
-    } else f += c;
+  // Fält utan citattecken klipps ut i ett stycke (snabbt även för filer på 100 MB); bara citerade fält läses tecken för tecken
+  const rows = []; let row = [];
+  const n = text.length, dc = d.charCodeAt(0);
+  let i = 0;
+  while (i < n) {
+    let f;
+    if (text.charCodeAt(i) === 34) {
+      f = ''; i++;
+      let st = i;
+      for (;;) {
+        const q = text.indexOf('"', i);
+        if (q < 0) { f += text.slice(st); i = n; break; }
+        if (text.charCodeAt(q + 1) === 34) { f += text.slice(st, q + 1); i = st = q + 2; continue; }
+        f += text.slice(st, q); i = q + 1; break;
+      }
+      // tecken efter slutcitatet fram till nästa avgränsare hör till fältet (ovanligt, men som förut)
+      const s0 = i;
+      while (i < n) { const c = text.charCodeAt(i); if (c === dc || c === 10 || c === 13) break; i++; }
+      if (i > s0) f += text.slice(s0, i);
+    } else {
+      const s0 = i;
+      while (i < n) { const c = text.charCodeAt(i); if (c === dc || c === 10 || c === 13) break; i++; }
+      f = text.slice(s0, i);
+    }
+    row.push(f);
+    if (i >= n) break;
+    const c = text.charCodeAt(i);
+    if (c === dc) { i++; if (i >= n) row.push(''); continue; }
+    if (c === 13 && text.charCodeAt(i + 1) === 10) i++;
+    i++;
+    rows.push(row); row = [];
   }
-  if (f !== '' || row.length) { row.push(f); rows.push(row); }
+  if (row.length) rows.push(row);
   return rows;
 }
 
@@ -125,6 +144,9 @@ const FIELDS = [
 const SWEDISH_HINTS = /(kampanj|kostnad|klick|konv|sökord|sökterm|visningar|exponeringar|dag$|vecka|annonsgrupp|förlor|kvalitet|artikel|produkt)/;
 const fixMojibake = s => s.replace(/Ã¶/g, 'ö').replace(/Ã¤/g, 'ä').replace(/Ã¥/g, 'å').replace(/Ã–/g, 'Ö').replace(/Ã„/g, 'Ä').replace(/Ã…/g, 'Å');
 const normH = h => fixMojibake(String(h || '')).toLowerCase().replace(/[\u00a0\s]+/g, ' ').trim();
+// Samma värden ("Exact match", "Enabled" ...) återkommer på hundratusentals rader: normalisera varje bara en gång
+const NORM_MEMO = new Map();
+const normV = v => { if (v === '' || v == null) return ''; let o = NORM_MEMO.get(v); if (o === undefined) { o = normH(v); if (NORM_MEMO.size < 5000) NORM_MEMO.set(v, o); } return o; };
 
 function mapHeaders(headers) {
   const map = {}; const used = new Set();
@@ -193,7 +215,7 @@ function findDatesIn(text) {
 /* ---------- Läs en fil till en rapport ---------- */
 function readReport(name, text) {
   const delim = detectDelimiter(text);
-  const rows = parseCSV(text, delim).filter(r => r.some(c => String(c).trim() !== ''));
+  const rows = parseCSV(text, delim).filter(r => r.some(c => c !== '' && c.trim() !== ''));
   let hi = -1, map = null;
   for (let i = 0; i < Math.min(rows.length, 25); i++) {
     const mp = mapHeaders(rows[i]);
@@ -237,10 +259,10 @@ function readReport(name, text) {
       keyword: type === 'keywords' ? id : '',
       itemId: type === 'products' ? id : '',
       title: String(get(r, 'productTitle') || '').trim(),
-      matchType: normH(get(r, 'matchType')),
-      added: normH(get(r, 'added')),
-      status: normH(get(r, 'status')),
-      type: normH(get(r, 'type')),
+      matchType: normV(get(r, 'matchType')),
+      added: normV(get(r, 'added')),
+      status: normV(get(r, 'status')),
+      type: normV(get(r, 'type')),
       date: map.day != null ? pdate(get(r, 'day')) : map.week != null ? pdate(get(r, 'week')) : null,
       cost: num(get(r, 'cost'), dc),
       impr: num(get(r, 'impr'), dc),
@@ -617,8 +639,10 @@ function analyze(reports, opts) {
     const core = t => t.name.toLowerCase().split(/[^a-z0-9åäöæøéü]+/).some(w => w.length >= 4 && sells(w));
     const thrOf = t => Math.max(minCostWithoutConversion(refT(t), core(t) ? STATS.sureLevel : STATS.flagLevel), M(30));
     const expensive = agg.filter(t => t.conv === 0 && t.cost >= thrOf(t));
-    const irrelevant = agg.filter(t => t.conv === 0 && t.cost > 0 && NEG_PATTERNS.some(p => p.re.test(t.name)) && !expensive.includes(t));
-    const tail = agg.filter(t => t.conv === 0 && !expensive.includes(t) && !irrelevant.includes(t));
+    const expSet = new Set(expensive);
+    const irrelevant = agg.filter(t => t.conv === 0 && t.cost > 0 && !expSet.has(t) && NEG_PATTERNS.some(p => p.re.test(t.name)));
+    const irrSet = new Set(irrelevant);
+    const tail = agg.filter(t => t.conv === 0 && !expSet.has(t) && !irrSet.has(t));
     const wasteSet = [...expensive, ...irrelevant];
     wasteSek = sum(wasteSet, 'cost') * mf;
     // Andelen räknas på månadsbelopp, eftersom rapporterna kan gälla olika långa perioder
@@ -697,7 +721,8 @@ function analyze(reports, opts) {
         if (picked.length >= 40) break;
       }
       if (picked.length) {
-        const extra = [...covered].filter(name => !counted.has(name)).reduce((s2, name) => s2 + (agg.find(t => t.name === name) || { cost: 0 }).cost, 0);
+        const costOf = new Map(agg.map(t => [t.name, t.cost]));
+        const extra = [...covered].filter(name => !counted.has(name)).reduce((s2, name) => s2 + (costOf.get(name) || 0), 0);
         const total = picked.reduce((s2, n) => s2 + n.cost, 0);
         waste.ngrams = picked.map(n => ({ word: n.g, terms: n.terms.length, costMonthly: n.cost * mf, clicks: n.clicks, risk: n.risk }));
         if (waste.negatives) picked.forEach(n => { const cs = [...new Set(n.terms.flatMap(t => t.campaigns || []))]; waste.negatives.push({ keyword: n.g, match: 'phrase', campaigns: cs, campaign: cs.length === 1 ? cs[0] : cs.length ? `${cs.length} kampanjer` : '', reason: `Ordet finns i ${pln(n.terms.length, 'söktermer')} utan försäljning`, costMonthly: n.cost * mf, terms: n.terms.length, risk: n.risk }); });
@@ -750,7 +775,9 @@ function analyze(reports, opts) {
     const ref = nbCPA || acctCPA || div(sum(kws, 'cost'), sum(kws, 'conv')) || 300;
     const refK = k => (isBrandCamp(k.campaign) ? brandRef(k.campaign, ref) : ref);
     // Status ingår i nyckeln: samma sökord kan finnas både i en aktiv annonsgrupp och i en borttagen med samma namn
-    const kAgg = [...groupBy(kws.map(k => Object.assign({ _k: [k.campaign, k.adGroup, k.keyword, k.matchType, k.status].join('|') }, k)), '_k')].map(([, rows]) => ({ ...rows[0], ...totals(rows), status: rows[0].status }));
+    const kGroups = new Map();
+    for (const k of kws) { const key = k.campaign + '|' + k.adGroup + '|' + k.keyword + '|' + k.matchType + '|' + k.status; const g = kGroups.get(key); if (g) g.push(k); else kGroups.set(key, [k]); }
+    const kAgg = [...kGroups.values()].map(rows => (rows.length === 1 ? { ...rows[0], ...totals(rows) } : { ...rows[0], ...totals(rows), status: rows[0].status }));
     const live = kAgg.filter(k => !/(paused|pausad|removed|borttagen|not eligible|inte berättigad|ej berättigad)/.test(k.status || '') && !stoppedCamps.has(k.campaign));
     // Utan konvertering: flaggas när risken att det är otur är högst STATS.flagLevel.
     // Med konverteringar: kostnaden per konvertering ska vara minst 2,5 gånger snittet OCH skillnaden får inte gå att förklara med slump.
