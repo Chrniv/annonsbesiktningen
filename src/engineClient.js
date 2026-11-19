@@ -4,6 +4,7 @@
   Sidan håller bara "handtag": rapporten utan rader, med id och rowCount.
 */
 import { readReport, analyze, decodeBuffer } from './engine.js';
+import { apiReport } from './googleAds.js';
 
 let worker = null, failed = false, seq = 0;
 const pending = new Map();
@@ -34,6 +35,18 @@ export const engineClient = {
       catch (e) { if (!failed) throw e; }
     }
     const r = readReport(name, isText ? data : decodeBuffer(data));
+    local.set(id, r);
+    return handle(id, r);
+  },
+  /** Läser ett svar från Google Ads API (ArrayBuffer med JSON). Returnerar ett handtag, eller { error } om svaret inte gick att läsa. */
+  async readApi(name, kind, buffer, meta) {
+    const id = 'r' + (++seq);
+    if (start()) {
+      try { return await call({ op: 'api', id, name, kind, buffer, meta }); }
+      catch (e) { if (!failed) throw e; }
+    }
+    const r = apiReport(name, kind, new TextDecoder().decode(buffer), meta);
+    if (r.error) return r;
     local.set(id, r);
     return handle(id, r);
   },

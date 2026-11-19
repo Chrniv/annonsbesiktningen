@@ -4,7 +4,7 @@ import { build } from 'esbuild';
 import { mkdirSync } from 'node:fs';
 
 mkdirSync('supabase/deploy', { recursive: true });
-for (const name of ['submit-lead', 'verify-payment']) {
+for (const name of ['submit-lead', 'verify-payment', 'google-ads']) {
   await build({
     entryPoints: [`supabase/functions/${name}/index.ts`],
     bundle: true, format: 'esm', platform: 'neutral', target: 'es2022',

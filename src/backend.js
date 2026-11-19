@@ -43,6 +43,26 @@ export const backend = {
     catch (e) { return { paid: false, error: e.message, status: e.status }; }
   },
 
+  /* ----- Google Ads API (Edge Function google-ads) ----- */
+  /** action 'exchange' eller 'revoke'. Kastar fel med .data = { error, reason } från funktionen. */
+  async googleAds(body) {
+    if (!backendConfigured()) throw new Error('not_configured');
+    return callFunction('google-ads', body);
+  },
+  /** Hämtar en rapport. Returnerar svaret som ArrayBuffer, så att det kan läsas i bakgrundstråden. */
+  async googleAdsReport(body) {
+    const res = await fetch(`${CONFIG.supabaseUrl.replace(/\/$/, '')}/functions/v1/google-ads`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', apikey: CONFIG.supabaseAnonKey },
+      body: JSON.stringify({ action: 'query', ...body })
+    });
+    if (!res.ok) {
+      let data = null; try { data = await res.json(); } catch (e) { /* tomt svar */ }
+      const err = new Error((data && data.error) || `http ${res.status}`); err.status = res.status; err.data = data; throw err;
+    }
+    return res.arrayBuffer();
+  },
+
   /* ----- Admin ----- */
   async sendLoginLink(email) {
     const sb = await client();

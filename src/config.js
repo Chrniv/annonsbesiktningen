@@ -23,6 +23,11 @@ export const CONFIG = {
   // Efter betalning ska länken skicka tillbaka kunden till: https://DIN-SAJT/?betald=1&session_id={CHECKOUT_SESSION_ID}
   paymentUrl: pick('VITE_STRIPE_PAYMENT_LINK', ''),
 
+  // Google Ads API: OAuth-klientens id från Google Cloud (Klienter › Webbapplikation). Id:t är publikt; hemligheten ligger
+  // bara i Edge Function google-ads. Tomt = knappen "Hämta direkt från Google Ads" visas inte.
+  googleClientId: pick('VITE_GOOGLE_CLIENT_ID', ''),
+  googleAdsDays: 90,               // så många dagar bakåt (till och med i går) hämtas från Google Ads
+
   productLabel: { column: 'custom_label_4', value: 'exkludera' }, // etikett i Merchant Center-tilläggsflödet för produkter att utesluta
   usdToSek: 9.7,                   // växelkurs för branschsnitt i USD (okt 2026)
   fxToSek: { SEK: 1, USD: 9.7, EUR: 11.0, NOK: 1.0, DKK: 1.48, GBP: 13.0, CHF: 12.0, PLN: 2.6, CZK: 0.44, HUF: 0.028 }, // ungefärliga kurser, okt 2026

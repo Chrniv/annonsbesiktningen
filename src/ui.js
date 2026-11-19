@@ -3,6 +3,8 @@ import { engineClient } from './engineClient.js';
 import { sanitizeResult } from './sanitize.js';
 import { savingsHeadline, sampleFiles, sampleFilesEcom, num, BENCH, CONFIG, fmtKr, fmtPct, fmtRange, fmtDelta, nf0, nf2, setCurrency, matchToEditor, negativesCsv, negativesPasteList, pauseKeywordsCsv, productsCsv, titlesCsv } from './engine.js';
 import { backend } from './backend.js';
+import { googleEnabled, startGoogleConnect, takeGoogleReturn, redirectUri, fmtCustomerId, apiPeriod, googleErrorText } from './googleConnect.js';
+import { API_REPORTS } from './googleAds.js';
 
 export function startApp() {
   const $ = id => document.getElementById(id);
@@ -63,6 +65,108 @@ export function startApp() {
     }
   }
   const TYPE_SV = { campaigns: 'Kampanjer', searchTerms: 'Söktermer', keywords: 'Sökord', products: 'Produkter' };
+
+  /* ===== Hämta direkt från Google Ads ===== */
+  // Inloggningen sker hos Google, bytet mot en token i Edge Function google-ads. Rapporterna läses sedan här i webbläsaren
+  // precis som uppladdade filer, och åtkomsten återkallas när de är hämtade.
+  const gads = { session: null, accounts: [] };
+  if (googleEnabled()) $('gads').hidden = false;
+  const gStatus = t => { const el = $('gads-status'); el.hidden = !t; el.textContent = t || ''; };
+  const gError = t => { const el = $('gads-error'); el.hidden = !t; el.textContent = t || ''; };
+  const idle = async () => { while (state.busy) await new Promise(r => setTimeout(r, 100)); };
+  $('gads-btn').addEventListener('click', () => {
+    gError('');
+    // Googles inloggning går inte att visa i en inbäddad ram: öppna verktyget i en egen flik
+    if (window.parent !== window) { window.open(location.origin + location.pathname + '?koppla=google', '_blank', 'noopener'); return; }
+    startGoogleConnect({ profile: state.profile, industry: $('industry').value })
+      .catch(() => gError('Inloggningen kunde inte starta i den här webbläsaren. Ladda upp CSV-filer i stället.'));
+  });
+  function revokeGoogle() {
+    const s = gads.session; gads.session = null;
+    if (s) backend.googleAds({ action: 'revoke', session: s }).catch(() => { /* går ut av sig själv inom en timme */ });
+  }
+  // Startsvaren sparades innan besökaren skickades till Google
+  function restoreProfile(saved) {
+    if (!saved || typeof saved !== 'object') return;
+    if (saved.profile && typeof saved.profile === 'object') Object.assign(state.profile, saved.profile);
+    if (saved.industry && BENCH.some(b => b.id === saved.industry)) $('industry').value = saved.industry;
+    if (state.profile.done && state.profile.type && state.profile.industry) finishQuiz(false);
+    $('margin-sel').value = $('margin-sel2').value = state.profile.margin || '';
+  }
+  async function finishGoogleReturn(ret) {
+    try { restoreProfile(ret.saved); } catch (e) { /* startsvaren går att fylla i igen */ }
+    $('intake').scrollIntoView({ block: 'start' });
+    if (ret.error) { gError(googleErrorText({ message: ret.error })); return; }
+    gStatus('Ansluter till Google Ads …');
+    let data;
+    try { data = await backend.googleAds({ action: 'exchange', code: ret.code, codeVerifier: ret.verifier, redirectUri: redirectUri() }); }
+    catch (e) {
+      gStatus('');
+      if (e.data && e.data.session) backend.googleAds({ action: 'revoke', session: e.data.session }).catch(() => {});
+      gError(googleErrorText(e)); return;
+    }
+    gads.session = data.session; gads.accounts = Array.isArray(data.accounts) ? data.accounts : [];
+    gStatus('');
+    if (!gads.accounts.length) { revokeGoogle(); gError('Ditt Google-konto har inte tillgång till något aktivt Google Ads-konto.'); return; }
+    if (gads.accounts.length === 1) { fetchGoogle(gads.accounts[0]); return; }
+    renderAccounts('');
+  }
+  function renderAccounts(filter) {
+    const box = $('gads-accounts');
+    box.hidden = false;
+    if (!box.querySelector('ul')) {
+      box.innerHTML = `<p class="q-title">Välj konto att besikta</p>${gads.accounts.length > 8 ? '<input type="search" id="gads-filter" placeholder="Sök på namn eller kontonummer" aria-label="Sök konto">' : ''}<ul></ul><div><button class="btn link" type="button" id="gads-cancel">Avbryt</button></div>`;
+      const fi = $('gads-filter'); if (fi) fi.addEventListener('input', () => renderAccounts(fi.value));
+    }
+    const f = String(filter || '').trim().toLowerCase(), fd = f.replace(/-/g, '');
+    const list = gads.accounts.filter(a => !f || String(a.name || '').toLowerCase().includes(f) || String(a.via || '').toLowerCase().includes(f) || (fd && String(a.id).includes(fd)));
+    box.querySelector('ul').innerHTML = list.map(a => `<li><button type="button" class="acct" data-acct="${esc(a.id)}"><strong>${esc(a.name || 'Namnlöst konto')}</strong><span class="acct-id">${esc(fmtCustomerId(a.id))}</span><span class="small muted">${esc([a.currency, a.via ? 'via ' + a.via : '', a.test ? 'testkonto' : ''].filter(Boolean).join(' · '))}</span></button></li>`).join('')
+      || '<li class="small muted">Inga konton matchar sökningen.</li>';
+  }
+  $('gads-accounts').addEventListener('click', ev => {
+    if (ev.target.closest('#gads-cancel')) { revokeGoogle(); $('gads-accounts').hidden = true; $('gads-accounts').innerHTML = ''; gStatus('Kopplingen till Google Ads är avslutad.'); return; }
+    const b = ev.target.closest('[data-acct]'); if (!b) return;
+    const a = gads.accounts.find(x => x.id === b.dataset.acct); if (a) fetchGoogle(a);
+  });
+  async function fetchGoogle(acct) {
+    const box = $('gads-accounts'); box.hidden = true; box.innerHTML = '';
+    gError(''); $('gads-btn').disabled = true;
+    // Rapporterna från Google Ads ersätter uppladdade filer, så att samma sorts rapport inte finns två gånger
+    const old = [...state.files.values()].filter(r => r.id); if (old.length) engineClient.drop(old);
+    state.files.clear(); state.sample = false; renderFiles();
+    const period = apiPeriod(CONFIG.googleAdsDays), meta = { ...period, currency: acct.currency };
+    const who = acct.name ? `${acct.name} (${fmtCustomerId(acct.id)})` : fmtCustomerId(acct.id);
+    let done = 0;
+    gStatus(`Hämtar rapporter för ${who}, ${period.from} – ${period.to} …`);
+    const results = await Promise.all(API_REPORTS.map(async R => {
+      const name = `Google Ads · ${R.label}`;
+      try {
+        const buf = await backend.googleAdsReport({ session: gads.session, customerId: acct.id, loginCustomerId: acct.loginCustomerId || null, report: R.kind, ...period });
+        return { R, rep: await engineClient.readApi(name, R.kind, buf, meta) };
+      } catch (e) { return { R, name, err: e }; }
+      finally { done++; if (done < API_REPORTS.length) gStatus(`Hämtar rapporter för ${who} … ${done} av ${API_REPORTS.length} klara`); }
+    }));
+    revokeGoogle();
+    $('gads-btn').disabled = false;
+    let campaignsOk = false, firstErr = null;
+    for (const { R, rep, name, err } of results) {
+      if (err) { firstErr = firstErr || err; state.files.set(name, { name, type: 'unknown', error: googleErrorText(err) }); continue; }
+      if (rep.error) { state.files.set(rep.name, rep); continue; }
+      // Tomma rapporter (t.ex. produkter i ett konto utan Shopping) visas inte
+      if (R.kind !== 'campaigns' && !rep.rowCount) { engineClient.drop([rep]); continue; }
+      if (R.kind === 'campaigns') campaignsOk = rep.rowCount > 0;
+      state.files.set(rep.name, rep);
+    }
+    renderFiles();
+    if (!campaignsOk) {
+      gStatus('');
+      gError(firstErr ? googleErrorText(firstErr) : `Kontot har ingen kostnad mellan ${period.from} och ${period.to}. Välj ett annat konto eller ladda upp CSV-filer.`);
+      return;
+    }
+    gStatus(`Hämtat från ${who}, ${period.from} – ${period.to}. Kopplingen till Google Ads är avslutad.`);
+    await idle();
+    run([...state.files.values()].filter(r => !r.error && !r.reading), false);
+  }
 
   /* ===== Startfrågor ===== */
   const Q = {
@@ -934,8 +1038,14 @@ ${negTable}${pauseT}${prodT}${pace}${wow}
     new ResizeObserver(() => window.parent.postMessage({ type: 'annonsbesiktning:height', height: document.documentElement.scrollHeight }, '*')).observe(document.body);
   }
 
-  // Öppna med exempelprotokoll så att sidan visar vad den gör
-  loadSample(false);
+  // Tillbaka från Googles inloggning: fortsätt där. Annars öppnas sidan med exempelprotokollet så att den visar vad den gör.
+  const googleReturn = googleEnabled() ? takeGoogleReturn() : null;
+  if (googleReturn) finishGoogleReturn(googleReturn);
+  else {
+    loadSample(false);
+    // Öppnad från en inbäddad sida för att koppla Google Ads
+    if (googleEnabled() && /[?&]koppla=google\b/.test(location.search)) $('intake').scrollIntoView({ block: 'start' });
+  }
   checkAdmin();
   checkPaidReturn();
 }
