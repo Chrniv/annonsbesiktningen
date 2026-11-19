@@ -31,7 +31,18 @@
   <p><span data-agency></span> är personuppgiftsansvarig. Du når oss på <span data-contact></span>.</p>
 
   <h2>Filerna du laddar upp</h2>
-  <p>Rapporterna från Google Ads läses och analyseras i din egen webbläsare. De skickas inte till oss och sparas inte, så länge du inte själv väljer att få sammanfattningen (se nästa avsnitt).</p>
+  <p>Rapporterna från Google Ads som du laddar upp läses och analyseras i din egen webbläsare. De skickas inte till oss och sparas inte, så länge du inte själv väljer att få sammanfattningen (se nästa avsnitt).</p>
+
+  <h2>Om du hämtar rapporterna direkt från Google Ads</h2>
+  <p>Du kan låta oss hämta rapporterna från Google Ads i stället för att ladda upp filer. Då loggar du in hos Google och godkänner åtkomsten där. Så här går det till:</p>
+  <ul>
+    <li>Vi läser bara rapporter för den period som granskas: kampanjer per dag, söktermer, sökord och produkter, plus namn och kontonummer för de annonskonton du har tillgång till så att du kan välja konto. Vi ändrar aldrig något i kontot.</li>
+    <li>Google frågar om full åtkomst till Google Ads, eftersom det inte finns någon behörighet för bara läsning. Vår kod gör bara läsfrågor.</li>
+    <li>Rapporterna passerar en funktion hos vår leverantör Supabase på väg till din webbläsare. Där läses eller sparas de inte. Analysen görs i din webbläsare, precis som med uppladdade filer.</li>
+    <li>Åtkomsten från Google gäller i högst en timme, sparas inte i någon databas och återkallas när rapporterna är hämtade. Du kan också själv ta bort åtkomsten när som helst på myaccount.google.com/permissions.</li>
+    <li>Vi använder uppgifterna från Google bara för att ta fram besiktningen åt dig. Vi använder dem inte för reklam, säljer dem inte och använder dem inte för att träna AI-modeller.</li>
+  </ul>
+  <p>Inget från kontot sparas hos oss förrän du själv lämnar din e-post (se nästa avsnitt).</p>
 
   <h2>Det vi sparar när du lämnar din e-post</h2>
   <p>När du fyller i e-post och kryssar i samtyckesrutan sparar vi:</p>
@@ -52,6 +63,8 @@
     <thead><tr><th>Leverantör</th><th>Uppgift</th><th>Plats</th></tr></thead>
     <tbody>
       <tr><td>Supabase</td><td>Databas för leads och köp</td><td>EU (Stockholm)</td></tr>
+      <tr><td>Supabase Edge Functions</td><td>Förmedlar rapporter från Google Ads till din webbläsare, utan att spara dem</td><td>Närmaste region, för besökare i Sverige normalt EU</td></tr>
+      <tr><td>Google</td><td>Inloggning och rapporter, om du hämtar direkt från Google Ads</td><td>EU och USA, enligt Googles villkor</td></tr>
       <tr><td>Netlify</td><td>Driftar webbplatsen</td><td>USA, med EU:s standardavtalsklausuler</td></tr>
       <tr><td>Stripe</td><td>Betalningar</td><td>EU och USA, med standardavtalsklausuler</td></tr>
       <tr><td>Resend</td><td>Skickar e-postnotiser till oss om nya leads</td><td>USA, med standardavtalsklausuler</td></tr>

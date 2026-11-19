@@ -7,4 +7,4 @@ document.querySelectorAll('[data-contact]').forEach(el => {
   if (!CONFIG.contactEmail) { el.textContent = 'kontaktadressen på vår webbplats'; return; }
   const a = document.createElement('a'); a.href = 'mailto:' + CONFIG.contactEmail; a.textContent = CONFIG.contactEmail; el.replaceWith(a);
 });
-document.getElementById('updated').textContent = '2026-10-19';
+document.getElementById('updated').textContent = '2026-11-19';

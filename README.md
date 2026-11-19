@@ -10,6 +10,7 @@ Gratis granskning av Google Ads-konton som leadmagnet. Besökaren laddar upp exp
 | Databas | Supabase (Stockholm) | Leads, köp och admins. Ingen besökare kan läsa något; bara admins. |
 | `submit-lead` | Supabase Edge Function | Sparar en lead när besökaren lämnar e-post och samtycke. Mejlar dig (valfritt, via Resend). |
 | `verify-payment` | Supabase Edge Function | Frågar Stripe om betalningen är klar innan hela rapporten låses upp. |
+| `google-ads` | Supabase Edge Function | Valfri: byter Googles inloggningskod mot en token och förmedlar rapporter från Google Ads API till webbläsaren. Sparar inget. |
 | Betalning | Stripe Payment Link | Kunden betalar hos Stripe och skickas tillbaka till sidan. |
 
 ```
@@ -20,6 +21,8 @@ src/engineClient.js  sidans koppling till bakgrundstråden (kör på sidan om tr
 src/sanitize.js    tvättar sparade protokoll innan de visas (adminvyn och efter köp)
 src/stats.js       statistiken: risk att det är otur, säkerhet och krympning mot snittet
 src/ui.js          gränssnittet
+src/googleAds.js   gör om svar från Google Ads API till samma rapporter som en CSV-export (ren logik)
+src/googleConnect.js  inloggningen hos Google (OAuth med PKCE) i webbläsaren
 src/backend.js     allt som pratar med Supabase
 src/config.js      inställningar (byrånamn, pris, Supabase-adress, betallänk)
 public/embed.js    inbäddning på andra webbplatser
@@ -61,6 +64,20 @@ Allt där är publikt. Lägg aldrig in hemliga nycklar.
 4. Skapa en **restricted key** med läsrätt för *Checkout Sessions* och lägg den som `STRIPE_SECRET_KEY` i Supabase. Länkens id (`plink_...`) blir `STRIPE_PAYMENT_LINK_ID`.
 
 Utan betallänk visas en knapp för att simulera betalning, men bara när sidan körs lokalt (`npm run dev`). På den publika sajten står det i stället att betalningen öppnar snart. Som admin ser du alltid hela rapporten.
+
+### 5. Google Ads API (valfritt: "Hämta direkt från Google Ads")
+Knappen visas först när `VITE_GOOGLE_CLIENT_ID` är satt. Allt annat fungerar utan den.
+1. **Google Cloud Console**: skapa ett projekt och aktivera **Google Ads API**. Projektet får då Test-åtkomst (bara testkonton).
+   Ansök om **Explorer** på Google Ads API-sidan i projektet för att nå riktiga konton (2 880 anrop per dygn). **Basic** (15 000) kräver varumärkesverifiering.
+2. **Google Auth Platform › Branding**: appnamn, supportadress, startsida, integritetspolicy (`https://DIN-SAJT/integritetspolicy.html`) och verifierad domän.
+   **Audience**: så länge appen är i läget *Testing* kan bara testanvändare du lägger till logga in (högst 100). Det räcker för att prova på egna konton.
+   **Data Access**: lägg till scopet `https://www.googleapis.com/auth/adwords`.
+3. **Clients › Create client › Web application**. Authorized redirect URI: sidans adress med avslutande snedstreck, t.ex. `https://annonsbesiktningen.netlify.app/` (lägg till `http://localhost:5173/` för lokal utveckling).
+4. **Supabase › Edge Functions**: skapa `google-ads` med `supabase/deploy/google-ads.ts`, stäng av **Verify JWT**, och lägg till hemligheterna
+   `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET` och `GOOGLE_ADS_SEAL_KEY` (minst 32 slumpade tecken, t.ex. `openssl rand -base64 32`).
+   Valfritt: `GOOGLE_ADS_API_VERSION` (standard `v26`). Utvecklartoken behövs inte sedan 9 september 2026.
+5. **Netlify**: sätt `VITE_GOOGLE_CLIENT_ID` till klientens id (det är publikt) och bygg om.
+6. Innan andra än testanvändare kan logga in utan varning behöver appen verifieras av Google (Audience › Publish app). Räkna med några veckor.
 
 ## Använda
 

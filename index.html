@@ -90,6 +90,16 @@
         <p class="small">Läses från exporten (SEK, NOK, DKK, EUR, USD, GBP, CHF, PLN, CZK eller HUF). Branschsnittet räknas om till kontots valuta.</p>
       </div>
     </div>
+    <div class="connect" id="gads" hidden>
+      <div class="connect-row">
+        <button class="btn primary" type="button" id="gads-btn">Hämta direkt från Google Ads</button>
+        <span class="small muted">eller ladda upp CSV-filer nedan</span>
+      </div>
+      <p class="small muted">Vi läser bara rapporter och ändrar aldrig något i kontot. Google frågar om full åtkomst, eftersom det inte finns någon behörighet för bara läsning. Åtkomsten avslutas när datan är hämtad, och inget sparas hos oss förrän du själv lämnar din e-post.</p>
+      <div class="accounts" id="gads-accounts" hidden></div>
+      <p class="small" id="gads-status" aria-live="polite" hidden></p>
+      <p class="error" id="gads-error" hidden></p>
+    </div>
     <label class="drop" id="drop" for="files">
       <strong>Släpp CSV-filer här eller klicka för att välja</strong>
       <span class="muted small">Kampanjrapport (obligatorisk) · Söktermer · Sökord · Produkter (Shopping). Svenska och engelska exporter fungerar.</span>
